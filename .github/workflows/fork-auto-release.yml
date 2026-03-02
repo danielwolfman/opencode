@@ -28,19 +28,32 @@ jobs:
 
       - name: Compute version
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version="0.0.0-fork.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          official_tag="$(gh api repos/anomalyco/opencode/releases/latest --jq .tag_name)"
+          official_version="${official_tag#v}"
+          short_sha="$(git rev-parse --short=10 "${GITHUB_SHA}")"
+          version="${official_version}-daniel-fork-${short_sha}"
+
+          echo "official_version=${official_version}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OFFICIAL_VERSION: ${{ steps.version.outputs.official_version }}
         run: |
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            gh release delete "${{ steps.version.outputs.tag }}" --yes --cleanup-tag
+          fi
+
           gh release create "${{ steps.version.outputs.tag }}" \
             --draft \
             --title "${{ steps.version.outputs.tag }}" \
-            --notes "Automated fork release for ${GITHUB_SHA}"
+            --notes "Automated fork release for ${GITHUB_SHA} (upstream ${OFFICIAL_VERSION})"
 
       - name: Build and upload release assets
         working-directory: packages/opencode
