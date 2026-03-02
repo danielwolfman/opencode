@@ -2,6 +2,8 @@ import { BusEvent } from "@/bus/bus-event"
 import path from "path"
 import { $ } from "bun"
 import z from "zod"
+import fs from "fs"
+import os from "os"
 import { NamedError } from "@opencode-ai/util/error"
 import { Log } from "../util/log"
 import { iife } from "@/util/iife"
@@ -14,6 +16,10 @@ declare global {
 
 export namespace Installation {
   const log = Log.create({ service: "installation" })
+  const UPDATE_REPO = process.env["OPENCODE_UPDATE_REPO"] || "anomalyco/opencode"
+  const UPDATE_INSTALL_URL = process.env["OPENCODE_UPDATE_INSTALL_URL"] || "https://opencode.ai/install"
+  const UPDATE_NPM_PACKAGE = process.env["OPENCODE_UPDATE_NPM_PACKAGE"] || "opencode-ai"
+  const UPDATE_BINARY_PATH = process.env["OPENCODE_UPDATE_BINARY_PATH"]
 
   export type Method = Awaited<ReturnType<typeof method>>
 
@@ -57,7 +63,99 @@ export namespace Installation {
     return CHANNEL === "local"
   }
 
+  function releaseBase() {
+    return `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`
+  }
+
+  function releaseTagURL(version: string, asset: string) {
+    return `https://github.com/${UPDATE_REPO}/releases/download/v${version}/${asset}`
+  }
+
+  function supportsAvx2() {
+    if (process.arch !== "x64") return false
+    if (process.platform === "linux") {
+      try {
+        return /(^|\s)avx2(\s|$)/i.test(fs.readFileSync("/proc/cpuinfo", "utf8"))
+      } catch {
+        return false
+      }
+    }
+    if (process.platform === "darwin") {
+      return false
+    }
+    if (process.platform === "win32") {
+      return false
+    }
+    return false
+  }
+
+  function isMusl() {
+    if (process.platform !== "linux") return false
+    try {
+      if (fs.existsSync("/etc/alpine-release")) return true
+    } catch {}
+    return false
+  }
+
+  function releaseAssetName() {
+    const platform = process.platform === "win32" ? "windows" : process.platform
+    const arch = process.arch === "x64" || process.arch === "arm64" || process.arch === "arm" ? process.arch : "x64"
+    const ext = process.platform === "linux" ? ".tar.gz" : ".zip"
+
+    const result = ["opencode", platform, arch]
+    if (process.arch === "x64" && !supportsAvx2()) result.push("baseline")
+    if (isMusl()) result.push("musl")
+    return result.join("-") + ext
+  }
+
+  async function upgradeBinary(target: string) {
+    if (!UPDATE_BINARY_PATH) {
+      throw new UpgradeFailedError({
+        stderr: "OPENCODE_UPDATE_BINARY_PATH is required for binary updates",
+      })
+    }
+
+    const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "opencode-upgrade-"))
+    const asset = releaseAssetName()
+    const archive = path.join(tmp, asset)
+    const binary = process.platform === "win32" ? "opencode.exe" : "opencode"
+
+    try {
+      const response = await fetch(releaseTagURL(target, asset), {
+        headers: {
+          "User-Agent": USER_AGENT,
+        },
+      })
+      if (!response.ok) throw new Error(`Failed to download ${asset}: ${response.status} ${response.statusText}`)
+
+      await Bun.write(archive, await response.arrayBuffer())
+      if (process.platform === "linux") {
+        await $`tar -xzf ${archive}`.cwd(tmp).quiet()
+      } else {
+        await $`unzip -q ${archive} -d ${tmp}`.quiet()
+      }
+
+      const extracted = path.join(tmp, binary)
+      const temp = UPDATE_BINARY_PATH + ".new"
+      await fs.promises.mkdir(path.dirname(UPDATE_BINARY_PATH), { recursive: true })
+      await fs.promises.copyFile(extracted, temp)
+      await fs.promises.chmod(temp, 0o755).catch(() => {})
+      await fs.promises.rm(UPDATE_BINARY_PATH, { force: true })
+      await fs.promises.rename(temp, UPDATE_BINARY_PATH)
+    } catch (error) {
+      throw new UpgradeFailedError({
+        stderr: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      await fs.promises.rm(tmp, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
   export async function method() {
+    const forced = process.env["OPENCODE_UPDATE_METHOD"]
+    if (forced === "binary" || forced === "curl" || forced === "npm" || forced === "pnpm" || forced === "bun")
+      return forced
+    if (UPDATE_BINARY_PATH) return "binary"
     if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl"
     if (process.execPath.includes(path.join(".local", "bin"))) return "curl"
     const exec = process.execPath.toLowerCase()
@@ -103,8 +201,7 @@ export namespace Installation {
 
     for (const check of checks) {
       const output = await check.command()
-      const installedName =
-        check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : "opencode-ai"
+      const installedName = check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : UPDATE_NPM_PACKAGE
       if (output.includes(installedName)) {
         return check.name
       }
@@ -129,22 +226,32 @@ export namespace Installation {
   }
 
   export async function upgrade(method: Method, target: string) {
+    if (method === "binary") {
+      await upgradeBinary(target)
+      log.info("upgraded", {
+        method,
+        target,
+      })
+      await $`${process.execPath} --version`.nothrow().quiet().text()
+      return
+    }
+
     let cmd
     switch (method) {
       case "curl":
-        cmd = $`curl -fsSL https://opencode.ai/install | bash`.env({
+        cmd = $`curl -fsSL ${UPDATE_INSTALL_URL} | bash`.env({
           ...process.env,
           VERSION: target,
         })
         break
       case "npm":
-        cmd = $`npm install -g opencode-ai@${target}`
+        cmd = $`npm install -g ${UPDATE_NPM_PACKAGE}@${target}`
         break
       case "pnpm":
-        cmd = $`pnpm install -g opencode-ai@${target}`
+        cmd = $`pnpm install -g ${UPDATE_NPM_PACKAGE}@${target}`
         break
       case "bun":
-        cmd = $`bun install -g opencode-ai@${target}`
+        cmd = $`bun install -g ${UPDATE_NPM_PACKAGE}@${target}`
         break
       case "brew": {
         const formula = await getBrewFormula()
@@ -220,7 +327,7 @@ export namespace Installation {
         return reg.endsWith("/") ? reg.slice(0, -1) : reg
       })
       const channel = CHANNEL
-      return fetch(`${registry}/opencode-ai/${channel}`)
+      return fetch(`${registry}/${UPDATE_NPM_PACKAGE}/${channel}`)
         .then((res) => {
           if (!res.ok) throw new Error(res.statusText)
           return res.json()
@@ -251,7 +358,11 @@ export namespace Installation {
         .then((data: any) => data.version)
     }
 
-    return fetch("https://api.github.com/repos/anomalyco/opencode/releases/latest")
+    return fetch(releaseBase(), {
+      headers: {
+        "User-Agent": USER_AGENT,
+      },
+    })
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText)
         return res.json()
