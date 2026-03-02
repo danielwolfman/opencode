@@ -37,7 +37,17 @@ jobs:
           git merge --no-edit upstream/dev
           head="$(git rev-parse HEAD)"
 
-          if [ "$base" = "$head" ]; then
+          find .github/workflows -maxdepth 1 -type f -name "*.yml" \
+            ! -name "sync-upstream.yml" \
+            ! -name "fork-auto-release.yml" \
+            -delete
+
+          if ! git diff --quiet -- .github/workflows; then
+            git add .github/workflows
+            git commit -m "chore(fork): keep minimal workflows"
+          fi
+
+          if [ "$base" = "$head" ] && git diff --quiet; then
             echo "Already up to date"
             exit 0
           fi
