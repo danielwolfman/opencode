@@ -1,0 +1,58 @@
+name: Fork Auto Release
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-auto-release-dev
+  cancel-in-progress: true
+
+jobs:
+  release:
+    if: github.repository == 'danielwolfman/opencode'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Compute version
+        id: version
+        run: |
+          version="0.0.0-fork.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --draft \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes "Automated fork release for ${GITHUB_SHA}"
+
+      - name: Build and upload release assets
+        working-directory: packages/opencode
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          OPENCODE_CHANNEL: latest
+          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
+          OPENCODE_RELEASE: "1"
+        run: bun run script/build.ts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false
