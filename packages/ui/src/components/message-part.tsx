@@ -5,6 +5,7 @@ import {
   createSignal,
   For,
   Match,
+  onMount,
   Show,
   Switch,
   onCleanup,
@@ -47,6 +48,46 @@ import { checksum } from "@opencode-ai/util/encode"
 import { Tooltip } from "./tooltip"
 import { IconButton } from "./icon-button"
 import { TextShimmer } from "./text-shimmer"
+import { AnimatedCountList } from "./tool-count-summary"
+import { ToolStatusTitle } from "./tool-status-title"
+import { animate } from "motion"
+
+function ShellSubmessage(props: { text: string; animate?: boolean }) {
+  let widthRef: HTMLSpanElement | undefined
+  let valueRef: HTMLSpanElement | undefined
+
+  onMount(() => {
+    if (!props.animate) return
+    requestAnimationFrame(() => {
+      if (widthRef) {
+        animate(widthRef, { width: "auto" }, { type: "spring", visualDuration: 0.25, bounce: 0 })
+      }
+      if (valueRef) {
+        animate(valueRef, { opacity: 1, filter: "blur(0px)" }, { duration: 0.32, ease: [0.16, 1, 0.3, 1] })
+      }
+    })
+  })
+
+  return (
+    <span data-component="shell-submessage">
+      <span
+        ref={widthRef}
+        data-slot="shell-submessage-width"
+        style={{ width: props.animate ? "0px" : undefined }}
+      >
+        <span data-slot="basic-tool-tool-subtitle">
+          <span
+            ref={valueRef}
+            data-slot="shell-submessage-value"
+            style={props.animate ? { opacity: 0, filter: "blur(2px)" } : undefined}
+          >
+            {props.text}
+          </span>
+        </span>
+      </span>
+    </span>
+  )
+}
 
 interface Diagnostic {
   range: {
@@ -469,23 +510,11 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
   }
 }
 
-function contextToolSummary(parts: ToolPart[], i18n: ReturnType<typeof useI18n>) {
+function contextToolSummary(parts: ToolPart[]) {
   const read = parts.filter((part) => part.tool === "read").length
   const search = parts.filter((part) => part.tool === "glob" || part.tool === "grep").length
   const list = parts.filter((part) => part.tool === "list").length
-  return [
-    read
-      ? i18n.t(read === 1 ? "ui.messagePart.context.read.one" : "ui.messagePart.context.read.other", { count: read })
-      : undefined,
-    search
-      ? i18n.t(search === 1 ? "ui.messagePart.context.search.one" : "ui.messagePart.context.search.other", {
-          count: search,
-        })
-      : undefined,
-    list
-      ? i18n.t(list === 1 ? "ui.messagePart.context.list.one" : "ui.messagePart.context.list.other", { count: list })
-      : undefined,
-  ].filter((value): value is string => !!value)
+  return { read, search, list }
 }
 
 export function registerPartComponent(type: string, component: PartComponent) {
@@ -610,33 +639,53 @@ function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean }) {
     () =>
       !!props.busy || props.parts.some((part) => part.state.status === "pending" || part.state.status === "running"),
   )
-  const summary = createMemo(() => contextToolSummary(props.parts, i18n))
-  const details = createMemo(() => summary().join(", "))
+  const summary = createMemo(() => contextToolSummary(props.parts))
 
   return (
     <Collapsible open={open()} onOpenChange={setOpen} variant="ghost">
       <Collapsible.Trigger>
         <div data-component="context-tool-group-trigger">
-          <Show
-            when={pending()}
-            fallback={
-              <span data-slot="context-tool-group-title">
-                <span data-slot="context-tool-group-label">{i18n.t("ui.sessionTurn.status.gatheredContext")}</span>
-                <Show when={details().length}>
-                  <span data-slot="context-tool-group-summary">{details()}</span>
-                </Show>
-              </span>
-            }
+          <span
+            data-slot="context-tool-group-title"
+            class="min-w-0 flex items-center gap-2 text-14-medium text-text-strong"
           >
-            <span data-slot="context-tool-group-title">
-              <span data-slot="context-tool-group-label">
-                <TextShimmer text={i18n.t("ui.sessionTurn.status.gatheringContext")} />
-              </span>
-              <Show when={details().length}>
-                <span data-slot="context-tool-group-summary">{details()}</span>
-              </Show>
+            <span data-slot="context-tool-group-label" class="shrink-0">
+              <ToolStatusTitle
+                active={pending()}
+                activeText={i18n.t("ui.sessionTurn.status.gatheringContext")}
+                doneText={i18n.t("ui.sessionTurn.status.gatheredContext")}
+                split={false}
+              />
             </span>
-          </Show>
+            <span
+              data-slot="context-tool-group-summary"
+              class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
+            >
+              <AnimatedCountList
+                items={[
+                  {
+                    key: "read",
+                    count: summary().read,
+                    one: i18n.t("ui.messagePart.context.read.one"),
+                    other: i18n.t("ui.messagePart.context.read.other"),
+                  },
+                  {
+                    key: "search",
+                    count: summary().search,
+                    one: i18n.t("ui.messagePart.context.search.one"),
+                    other: i18n.t("ui.messagePart.context.search.other"),
+                  },
+                  {
+                    key: "list",
+                    count: summary().list,
+                    one: i18n.t("ui.messagePart.context.list.one"),
+                    other: i18n.t("ui.messagePart.context.list.other"),
+                  },
+                ]}
+                fallback=""
+              />
+            </span>
+          </span>
           <Collapsible.Arrow />
         </div>
       </Collapsible.Trigger>
@@ -654,9 +703,7 @@ function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean }) {
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
                             <span data-slot="basic-tool-tool-title">
-                              <Show when={running} fallback={trigger.title}>
-                                <TextShimmer text={trigger.title} />
-                              </Show>
+                              <TextShimmer text={trigger.title} active={running} />
                             </span>
                             <Show when={!running && trigger.subtitle}>
                               <span data-slot="basic-tool-tool-subtitle">{trigger.subtitle}</span>
@@ -1319,9 +1366,7 @@ ToolRegistry.register({
           <div data-slot="basic-tool-tool-info-structured">
             <div data-slot="basic-tool-tool-info-main">
               <span data-slot="basic-tool-tool-title">
-                <Show when={pending()} fallback={i18n.t("ui.tool.webfetch")}>
-                  <TextShimmer text={i18n.t("ui.tool.webfetch")} />
-                </Show>
+                <TextShimmer text={i18n.t("ui.tool.webfetch")} active={pending()} />
               </span>
               <Show when={!pending() && url()}>
                 <a
@@ -1436,6 +1481,8 @@ ToolRegistry.register({
   name: "bash",
   render(props) {
     const i18n = useI18n()
+    const pending = () => props.status === "pending" || props.status === "running"
+    const sawPending = pending()
     const text = createMemo(() => {
       const cmd = props.input.command ?? props.metadata.command ?? ""
       const out = stripAnsi(props.output || props.metadata.output || "")
@@ -1455,10 +1502,18 @@ ToolRegistry.register({
       <BasicTool
         {...props}
         icon="console"
-        trigger={{
-          title: i18n.t("ui.tool.shell"),
-          subtitle: props.input.description,
-        }}
+        trigger={
+          <div data-slot="basic-tool-tool-info-structured">
+            <div data-slot="basic-tool-tool-info-main">
+              <span data-slot="basic-tool-tool-title">
+                <TextShimmer text={i18n.t("ui.tool.shell")} active={pending()} />
+              </span>
+              <Show when={!pending() && props.input.description}>
+                <ShellSubmessage text={props.input.description} animate={sawPending} />
+              </Show>
+            </div>
+          </div>
+        }
       >
         <div data-component="bash-output">
           <div data-slot="bash-copy">
@@ -1508,9 +1563,7 @@ ToolRegistry.register({
               <div data-slot="message-part-title-area">
                 <div data-slot="message-part-title">
                   <span data-slot="message-part-title-text">
-                    <Show when={pending()} fallback={i18n.t("ui.messagePart.title.edit")}>
-                      <TextShimmer text={i18n.t("ui.messagePart.title.edit")} />
-                    </Show>
+                    <TextShimmer text={i18n.t("ui.messagePart.title.edit")} active={pending()} />
                   </span>
                   <Show when={!pending()}>
                     <span data-slot="message-part-title-filename">{filename()}</span>
@@ -1580,9 +1633,7 @@ ToolRegistry.register({
               <div data-slot="message-part-title-area">
                 <div data-slot="message-part-title">
                   <span data-slot="message-part-title-text">
-                    <Show when={pending()} fallback={i18n.t("ui.messagePart.title.write")}>
-                      <TextShimmer text={i18n.t("ui.messagePart.title.write")} />
-                    </Show>
+                    <TextShimmer text={i18n.t("ui.messagePart.title.write")} active={pending()} />
                   </span>
                   <Show when={!pending()}>
                     <span data-slot="message-part-title-filename">{filename()}</span>
@@ -1774,9 +1825,7 @@ ToolRegistry.register({
                   <div data-slot="message-part-title-area">
                     <div data-slot="message-part-title">
                       <span data-slot="message-part-title-text">
-                        <Show when={pending()} fallback={i18n.t("ui.tool.patch")}>
-                          <TextShimmer text={i18n.t("ui.tool.patch")} />
-                        </Show>
+                        <TextShimmer text={i18n.t("ui.tool.patch")} active={pending()} />
                       </span>
                       <Show when={!pending()}>
                         <span data-slot="message-part-title-filename">{getFilename(file().relativePath)}</span>
