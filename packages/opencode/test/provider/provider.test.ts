@@ -5,6 +5,7 @@ import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider/provider"
 import { Env } from "../../src/env"
+import { Auth } from "../../src/auth"
 
 test("provider loaded from env variable", async () => {
   await using tmp = await tmpdir({
@@ -1012,6 +1013,45 @@ test("multiple providers can be configured simultaneously", async () => {
       expect(providers["openai"].options.timeout).toBe(60000)
     },
   })
+})
+
+test("openai profiles load as separate providers from auth", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+        }),
+      )
+    },
+  })
+
+  await Auth.set("openai-profile-account1", {
+    type: "api",
+    key: "test-key-1",
+  })
+  await Auth.set("openai-profile-account2", {
+    type: "api",
+    key: "test-key-2",
+  })
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const providers = await Provider.list()
+        expect(providers["openai-profile-account1"]).toBeDefined()
+        expect(providers["openai-profile-account2"]).toBeDefined()
+        expect(providers["openai-profile-account1"].source).toBe("api")
+        expect(providers["openai-profile-account2"].source).toBe("api")
+        expect(Object.keys(providers["openai-profile-account1"].models).length).toBeGreaterThan(0)
+      },
+    })
+  } finally {
+    await Auth.remove("openai-profile-account1")
+    await Auth.remove("openai-profile-account2")
+  }
 })
 
 test("provider with custom npm package", async () => {

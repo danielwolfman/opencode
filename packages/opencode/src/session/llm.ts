@@ -22,6 +22,7 @@ import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
 import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
+import { openAIBaseProviderID } from "@/provider/profile"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -62,7 +63,7 @@ export namespace LLM {
       Provider.getProvider(input.model.providerID),
       Auth.get(input.model.providerID),
     ])
-    const isCodex = provider.id === "openai" && auth?.type === "oauth"
+    const isCodex = openAIBaseProviderID(provider.id) === "openai" && auth?.type === "oauth"
 
     const system = []
     system.push(

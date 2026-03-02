@@ -101,6 +101,21 @@ describe("ProviderTransform.options - setCacheKey", () => {
     })
     expect(result.store).toBe(false)
   })
+
+  test("should set openai defaults for openai profile providers", () => {
+    const openaiModel = {
+      ...mockModel,
+      providerID: "openai-profile-account1",
+      api: {
+        id: "gpt-4",
+        url: "https://api.openai.com",
+        npm: "@ai-sdk/openai",
+      },
+    }
+    const result = ProviderTransform.options({ model: openaiModel, sessionID, providerOptions: {} })
+    expect(result.promptCacheKey).toBe(sessionID)
+    expect(result.store).toBe(false)
+  })
 })
 
 describe("ProviderTransform.options - gpt-5 textVerbosity", () => {

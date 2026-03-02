@@ -13,6 +13,7 @@ import { Instance } from "../../project/instance"
 import type { Hooks } from "@opencode-ai/plugin"
 import { Process } from "../../util/process"
 import { text } from "node:stream/consumers"
+import { openAIProfileName } from "../../provider/profile"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -215,7 +216,8 @@ export const AuthListCommand = cmd({
     const database = await ModelsDev.get()
 
     for (const [providerID, result] of results) {
-      const name = database[providerID]?.name || providerID
+      const profile = openAIProfileName(providerID)
+      const name = profile ? `OpenAI (${profile})` : database[providerID]?.name || providerID
       prompts.log.info(`${name} ${UI.Style.TEXT_DIM}${result.type}`)
     }
 
@@ -437,10 +439,14 @@ export const AuthLogoutCommand = cmd({
     const database = await ModelsDev.get()
     const providerID = await prompts.select({
       message: "Select provider",
-      options: credentials.map(([key, value]) => ({
-        label: (database[key]?.name || key) + UI.Style.TEXT_DIM + " (" + value.type + ")",
-        value: key,
-      })),
+      options: credentials.map(([key, value]) => {
+        const profile = openAIProfileName(key)
+        const name = profile ? `OpenAI (${profile})` : database[key]?.name || key
+        return {
+          label: name + UI.Style.TEXT_DIM + " (" + value.type + ")",
+          value: key,
+        }
+      }),
     })
     if (prompts.isCancel(providerID)) throw new UI.CancelledError()
     await Auth.remove(providerID)

@@ -44,6 +44,7 @@ import { fromNodeProviderChain } from "@aws-sdk/credential-providers"
 import { GoogleAuth } from "google-auth-library"
 import { ProviderTransform } from "./transform"
 import { Installation } from "../installation"
+import { isOpenAIProfileProviderID, openAIBaseProviderID, openAIProfileName } from "./profile"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -754,18 +755,32 @@ export namespace Provider {
     }
   }
 
+  function cloneProvider(provider: Info, providerID: string, name?: string): Info {
+    return {
+      ...provider,
+      id: providerID,
+      name: name ?? provider.name,
+      models: mapValues(provider.models, (model) => ({
+        ...model,
+        providerID,
+      })),
+    }
+  }
+
   const state = Instance.state(async () => {
     using _ = log.time("state")
     const config = await Config.get()
     const modelsDev = await ModelsDev.get()
     const database = mapValues(modelsDev, fromModelsDevProvider)
+    const auth = await Auth.all()
 
     const disabled = new Set(config.disabled_providers ?? [])
     const enabled = config.enabled_providers ? new Set(config.enabled_providers) : null
 
     function isProviderAllowed(providerID: string): boolean {
-      if (enabled && !enabled.has(providerID)) return false
-      if (disabled.has(providerID)) return false
+      const base = openAIBaseProviderID(providerID)
+      if (enabled && !enabled.has(providerID) && !enabled.has(base)) return false
+      if (disabled.has(providerID) || disabled.has(base)) return false
       return true
     }
 
@@ -791,6 +806,16 @@ export namespace Provider {
           ...model,
           providerID: "github-copilot-enterprise",
         })),
+      }
+    }
+
+    if (database["openai"]) {
+      for (const providerID of Object.keys(auth)) {
+        if (!isOpenAIProfileProviderID(providerID)) continue
+        if (database[providerID]) continue
+        const profile = openAIProfileName(providerID)
+        const name = profile ? `${database["openai"].name} (${profile})` : database["openai"].name
+        database[providerID] = cloneProvider(database["openai"], providerID, name)
       }
     }
 
@@ -893,7 +918,7 @@ export namespace Provider {
     // load env
     const env = Env.all()
     for (const [providerID, provider] of Object.entries(database)) {
-      if (disabled.has(providerID)) continue
+      if (!isProviderAllowed(providerID)) continue
       const apiKey = provider.env.map((item) => env[item]).find(Boolean)
       if (!apiKey) continue
       mergeProvider(providerID, {
@@ -903,8 +928,8 @@ export namespace Provider {
     }
 
     // load apikeys
-    for (const [providerID, provider] of Object.entries(await Auth.all())) {
-      if (disabled.has(providerID)) continue
+    for (const [providerID, provider] of Object.entries(auth)) {
+      if (!isProviderAllowed(providerID)) continue
       if (provider.type === "api") {
         mergeProvider(providerID, {
           source: "api",
@@ -915,58 +940,34 @@ export namespace Provider {
 
     for (const plugin of await Plugin.list()) {
       if (!plugin.auth) continue
-      const providerID = plugin.auth.provider
-      if (disabled.has(providerID)) continue
-
-      // For github-copilot plugin, check if auth exists for either github-copilot or github-copilot-enterprise
-      let hasAuth = false
-      const auth = await Auth.get(providerID)
-      if (auth) hasAuth = true
-
-      // Special handling for github-copilot: also check for enterprise auth
-      if (providerID === "github-copilot" && !hasAuth) {
-        const enterpriseAuth = await Auth.get("github-copilot-enterprise")
-        if (enterpriseAuth) hasAuth = true
-      }
-
-      if (!hasAuth) continue
       if (!plugin.auth.loader) continue
 
-      // Load for the main provider if auth exists
-      if (auth) {
-        const options = await plugin.auth.loader(() => Auth.get(providerID) as any, database[plugin.auth.provider])
+      const ids = new Set<string>([plugin.auth.provider])
+      if (plugin.auth.provider === "github-copilot") {
+        ids.add("github-copilot-enterprise")
+      }
+      if (plugin.auth.provider === "openai") {
+        for (const key of Object.keys(auth)) {
+          if (isOpenAIProfileProviderID(key)) ids.add(key)
+        }
+      }
+
+      for (const providerID of ids) {
+        if (!isProviderAllowed(providerID)) continue
+        if (!auth[providerID]) continue
+        const provider = database[providerID]
+        if (!provider) continue
+        const options = await plugin.auth.loader(() => Auth.get(providerID) as any, provider)
         const opts = options ?? {}
         const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
         mergeProvider(providerID, patch)
       }
-
-      // If this is github-copilot plugin, also register for github-copilot-enterprise if auth exists
-      if (providerID === "github-copilot") {
-        const enterpriseProviderID = "github-copilot-enterprise"
-        if (!disabled.has(enterpriseProviderID)) {
-          const enterpriseAuth = await Auth.get(enterpriseProviderID)
-          if (enterpriseAuth) {
-            const enterpriseOptions = await plugin.auth.loader(
-              () => Auth.get(enterpriseProviderID) as any,
-              database[enterpriseProviderID],
-            )
-            const opts = enterpriseOptions ?? {}
-            const patch: Partial<Info> = providers[enterpriseProviderID]
-              ? { options: opts }
-              : { source: "custom", options: opts }
-            mergeProvider(enterpriseProviderID, patch)
-          }
-        }
-      }
     }
 
-    for (const [providerID, fn] of Object.entries(CUSTOM_LOADERS)) {
-      if (disabled.has(providerID)) continue
-      const data = database[providerID]
-      if (!data) {
-        log.error("Provider does not exist in model list " + providerID)
-        continue
-      }
+    for (const [providerID, data] of Object.entries(database)) {
+      if (!isProviderAllowed(providerID)) continue
+      const fn = CUSTOM_LOADERS[openAIBaseProviderID(providerID)]
+      if (!fn) continue
       const result = await fn(data)
       if (result && (result.autoload || providers[providerID])) {
         if (result.getModel) modelLoaders[providerID] = result.getModel

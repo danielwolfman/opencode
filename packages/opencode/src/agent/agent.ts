@@ -6,6 +6,7 @@ import { SystemPrompt } from "../session/system"
 import { Instance } from "../project/instance"
 import { Truncate } from "../tool/truncation"
 import { Auth } from "../auth"
+import { openAIBaseProviderID } from "@/provider/profile"
 import { ProviderTransform } from "../provider/transform"
 
 import PROMPT_GENERATE from "./generate.txt"
@@ -318,7 +319,7 @@ export namespace Agent {
       }),
     } satisfies Parameters<typeof generateObject>[0]
 
-    if (defaultModel.providerID === "openai" && (await Auth.get(defaultModel.providerID))?.type === "oauth") {
+    if (openAIBaseProviderID(defaultModel.providerID) === "openai" && (await Auth.get(defaultModel.providerID))?.type === "oauth") {
       const result = streamObject({
         ...params,
         providerOptions: ProviderTransform.providerOptions(model, {
