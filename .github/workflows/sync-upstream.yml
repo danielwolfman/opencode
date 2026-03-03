@@ -34,7 +34,25 @@ jobs:
           git pull --ff-only origin dev
 
           base="$(git rev-parse HEAD)"
-          git merge --no-edit upstream/dev
+          if ! git merge --no-edit upstream/dev; then
+            for file in $(git diff --name-only --diff-filter=U); do
+              case "$file" in
+                .github/workflows/sync-upstream.yml|.github/workflows/fork-auto-release.yml)
+                  git checkout --ours -- "$file"
+                  git add "$file"
+                  ;;
+                .github/workflows/*)
+                  git rm "$file"
+                  ;;
+                *)
+                  echo "Unhandled merge conflict in $file"
+                  exit 1
+                  ;;
+              esac
+            done
+
+            git commit -m "chore(fork): auto-resolve workflow merge conflicts"
+          fi
           head="$(git rev-parse HEAD)"
 
           find .github/workflows -maxdepth 1 -type f -name "*.yml" \
