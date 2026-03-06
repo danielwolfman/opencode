@@ -44,6 +44,10 @@ jobs:
                 .github/workflows/*)
                   git rm "$file"
                   ;;
+                packages/opencode/src/cli/cmd/auth.ts|packages/opencode/src/plugin/codex.ts)
+                  git checkout --ours -- "$file"
+                  git add "$file"
+                  ;;
                 *)
                   echo "Unhandled merge conflict in $file"
                   exit 1
