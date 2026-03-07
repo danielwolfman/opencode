@@ -33,9 +33,10 @@ import { usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
-import { createOpenReviewFile } from "@/pages/session/helpers"
+import { createOpenReviewFile, createSizing } from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
+import { resetSessionModel, syncSessionModel } from "@/pages/session/session-model-helpers"
 import { createScrollSpy } from "@/pages/session/scroll-spy"
 import { SessionMobileTabs } from "@/pages/session/session-mobile-tabs"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
@@ -332,6 +333,7 @@ export default function Page() {
   )
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
+  const size = createSizing()
   const desktopReviewOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const desktopFileTreeOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
   const desktopSidePanelOpen = createMemo(() => desktopReviewOpen() || desktopFileTreeOpen())
@@ -417,12 +419,19 @@ export default function Page() {
       () => {
         const msg = lastUserMessage()
         if (!msg) return
-        if (msg.agent) {
-          local.agent.set(msg.agent)
-          if (local.agent.current()?.model) return
-        }
-        if (msg.model) local.model.set(msg.model)
+        syncSessionModel(local, msg)
       },
+    ),
+  )
+
+  createEffect(
+    on(
+      () => params.id,
+      (id, prev) => {
+        if (id || !prev) return
+        resetSessionModel(local)
+      },
+      { defer: true },
     ),
   )
 
@@ -790,7 +799,7 @@ export default function Page() {
   }
 
   const emptyTurn = () => (
-    <div class="h-full pb-30 flex flex-col items-center justify-center text-center gap-6">
+    <div class="h-full pb-64 flex flex-col items-center justify-center text-center gap-6">
       <div class="text-14-regular text-text-weak max-w-56">{language.t("session.review.noChanges")}</div>
     </div>
   )
@@ -905,7 +914,7 @@ export default function Page() {
           diffStyle: layout.review.diffStyle(),
           onDiffStyleChange: layout.review.setDiffStyle,
           loadingClass: "px-6 py-4 text-text-weak",
-          emptyClass: "h-full pb-30 flex flex-col items-center justify-center text-center gap-6",
+          emptyClass: "h-full pb-64 flex flex-col items-center justify-center text-center gap-6",
         })}
       </div>
     </div>
@@ -1252,9 +1261,9 @@ export default function Page() {
         {/* Session panel */}
         <div
           classList={{
-            "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger": true,
-            "flex-1": true,
-            "md:flex-none": desktopSidePanelOpen(),
+            "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger flex-1 md:flex-none": true,
+            "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
+              !size.active(),
           }}
           style={{
             width: sessionPanelWidth(),
@@ -1274,7 +1283,7 @@ export default function Page() {
                         container: "px-4",
                       },
                       loadingClass: "px-4 py-4 text-text-weak",
-                      emptyClass: "h-full pb-30 flex flex-col items-center justify-center text-center gap-6",
+                      emptyClass: "h-full pb-64 flex flex-col items-center justify-center text-center gap-6",
                     })}
                     scroll={ui.scroll}
                     onResumeScroll={resumeScroll}
@@ -1351,17 +1360,27 @@ export default function Page() {
           />
 
           <Show when={desktopReviewOpen()}>
-            <ResizeHandle
-              direction="horizontal"
-              size={layout.session.width()}
-              min={450}
-              max={typeof window === "undefined" ? 1000 : window.innerWidth * 0.45}
-              onResize={layout.session.resize}
-            />
+            <div onPointerDown={() => size.start()}>
+              <ResizeHandle
+                direction="horizontal"
+                size={layout.session.width()}
+                min={450}
+                max={typeof window === "undefined" ? 1000 : window.innerWidth * 0.45}
+                onResize={(width) => {
+                  size.touch()
+                  layout.session.resize(width)
+                }}
+              />
+            </div>
           </Show>
         </div>
 
-        <SessionSidePanel reviewPanel={reviewPanel} activeDiff={tree.activeDiff} focusReviewDiff={focusReviewDiff} />
+        <SessionSidePanel
+          reviewPanel={reviewPanel}
+          activeDiff={tree.activeDiff}
+          focusReviewDiff={focusReviewDiff}
+          size={size}
+        />
       </div>
 
       <TerminalPanel />
