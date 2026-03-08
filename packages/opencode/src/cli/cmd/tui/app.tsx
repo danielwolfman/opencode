@@ -729,23 +729,11 @@ function App() {
     }).exited.catch(() => {})
   }
 
-  const jump = async (sessionID: string) => {
+  const jump = (sessionID: string) => {
     route.navigate({
       type: "session",
       sessionID,
     })
-    if (process.platform !== "linux") return
-    const bin = Bun.which("wmctrl")
-    if (!bin) return
-    const cap = title(sessionID)
-    const proc = Bun.spawn([bin, "-a", cap], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    })
-    const code = await proc.exited.catch(() => 1)
-    if (code === 0 || cap === "OpenCode") return
-    run([bin, "-a", "OpenCode"])
   }
 
   const focused = async (sessionID: string) => {
@@ -816,7 +804,7 @@ function App() {
             const key = a[2]
             if (key === "open" || key === "default") {
               const sid = ids.get(id)
-              if (sid) jump(sid).catch(() => {})
+              if (sid) jump(sid)
               ids.delete(id)
             }
             continue
@@ -871,7 +859,6 @@ function App() {
   const notify = async (sessionID: string) => {
     const text = title(sessionID)
     const bin = Bun.which("gdbus")
-    const focus = Bun.which("wmctrl")
     if (!bin) {
       const send = Bun.which("notify-send")
       if (!send) return
@@ -879,7 +866,7 @@ function App() {
       return
     }
 
-    const click = !!focus && (await caps())
+    const click = await caps()
     if (click) watch()
 
     const proc = Bun.spawn(
