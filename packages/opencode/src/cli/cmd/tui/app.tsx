@@ -729,6 +729,25 @@ function App() {
     }).exited.catch(() => {})
   }
 
+  const jump = async (sessionID: string) => {
+    route.navigate({
+      type: "session",
+      sessionID,
+    })
+    if (process.platform !== "linux") return
+    const bin = Bun.which("wmctrl")
+    if (!bin) return
+    const cap = title(sessionID)
+    const proc = Bun.spawn([bin, "-a", cap], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    const code = await proc.exited.catch(() => 1)
+    if (code === 0 || cap === "OpenCode") return
+    run([bin, "-a", "OpenCode"])
+  }
+
   const focused = async (sessionID: string) => {
     if (process.platform !== "linux") return false
     const dbus = Bun.which("qdbus")
@@ -750,27 +769,23 @@ function App() {
     return cap === text || cap.includes(text)
   }
 
-  const notify = (sessionID: string) => {
-    const send = Bun.which("notify-send")
-    if (!send) return
-    const text = title(sessionID)
-    const focus = Bun.which("wmctrl")
-    if (!focus) {
-      run([send, "-a", "OpenCode", "-h", "string:sound-name:message-new-instant", "Task completed", text])
-      return
-    }
+  const ids = new Map<number, string>()
+  let bus: ReturnType<typeof Bun.spawn> | undefined
+  let acts: boolean | undefined
 
+  const watch = () => {
+    if (bus) return
+    const bin = Bun.which("gdbus")
+    if (!bin) return
     const proc = Bun.spawn(
       [
-        send,
-        "-a",
-        "OpenCode",
-        "-h",
-        "string:sound-name:message-new-instant",
-        "-A",
-        "open=Open OpenCode",
-        "Task completed",
-        text,
+        bin,
+        "monitor",
+        "--session",
+        "--dest",
+        "org.freedesktop.Notifications",
+        "--object-path",
+        "/org/freedesktop/Notifications",
       ],
       {
         stdin: "ignore",
@@ -778,20 +793,135 @@ function App() {
         stderr: "ignore",
       },
     )
-    proc.exited
-      .then(async () => {
-        if (!proc.stdout) return
-        const result = (await new Response(proc.stdout).text()).trim()
-        if (result !== "open") return
-        run([focus, "-a", text])
-      })
-      .catch(() => {})
+    bus = proc
+    if (!proc.stdout) return
+
+    ;(async () => {
+      const read = proc.stdout.getReader()
+      const dec = new TextDecoder()
+      let out = ""
+      for (;;) {
+        const chunk = await read.read().catch(() => undefined)
+        if (!chunk || chunk.done) break
+        out += dec.decode(chunk.value, { stream: true })
+        for (;;) {
+          const idx = out.indexOf("\n")
+          if (idx < 0) break
+          const line = out.slice(0, idx).trim()
+          out = out.slice(idx + 1)
+
+          const a = line.match(/ActionInvoked \(uint32 (\d+), '([^']+)'\)/)
+          if (a) {
+            const id = Number(a[1])
+            const key = a[2]
+            if (key === "open" || key === "default") {
+              const sid = ids.get(id)
+              if (sid) jump(sid).catch(() => {})
+              ids.delete(id)
+            }
+            continue
+          }
+
+          const c = line.match(/NotificationClosed \(uint32 (\d+), uint32 \d+\)/)
+          if (!c) continue
+          ids.delete(Number(c[1]))
+        }
+      }
+      if (bus === proc) bus = undefined
+    })().catch(() => {
+      if (bus === proc) bus = undefined
+    })
+  }
+
+  const caps = async () => {
+    if (acts !== undefined) return acts
+    const bin = Bun.which("gdbus")
+    if (!bin) {
+      acts = false
+      return acts
+    }
+    const proc = Bun.spawn(
+      [
+        bin,
+        "call",
+        "--session",
+        "--dest",
+        "org.freedesktop.Notifications",
+        "--object-path",
+        "/org/freedesktop/Notifications",
+        "--method",
+        "org.freedesktop.Notifications.GetCapabilities",
+      ],
+      {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      },
+    )
+    await proc.exited.catch(() => {})
+    if (!proc.stdout) {
+      acts = false
+      return acts
+    }
+    const out = await new Response(proc.stdout).text().catch(() => "")
+    acts = /\bactions\b/.test(out)
+    return acts
+  }
+
+  const notify = async (sessionID: string) => {
+    const text = title(sessionID)
+    const bin = Bun.which("gdbus")
+    const focus = Bun.which("wmctrl")
+    if (!bin) {
+      const send = Bun.which("notify-send")
+      if (!send) return
+      run([send, "-a", "OpenCode", "-h", "string:sound-name:message-new-instant", "Task completed", text])
+      return
+    }
+
+    const click = !!focus && (await caps())
+    if (click) watch()
+
+    const proc = Bun.spawn(
+      [
+        bin,
+        "call",
+        "--session",
+        "--dest",
+        "org.freedesktop.Notifications",
+        "--object-path",
+        "/org/freedesktop/Notifications",
+        "--method",
+        "org.freedesktop.Notifications.Notify",
+        "OpenCode",
+        "0",
+        "",
+        "Task completed",
+        text,
+        click ? "['open', 'Open OpenCode']" : "[]",
+        "{'sound-name': <'message-new-instant'>}",
+        "5000",
+      ],
+      {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      },
+    )
+    await proc.exited.catch(() => {})
+    if (!click || !proc.stdout) return
+    const out = await new Response(proc.stdout).text().catch(() => "")
+    const hit = out.match(/uint32\s+(\d+)/)
+    if (!hit) return
+    const id = Number(hit[1])
+    ids.set(id, sessionID)
+    setTimeout(() => ids.delete(id), 30_000)
   }
 
   const ding = async (sessionID: string) => {
     if (await focused(sessionID)) return
     if (alerts() && process.platform === "linux") {
-      notify(sessionID)
+      notify(sessionID).catch(() => {})
     }
 
     if (!bells()) return
