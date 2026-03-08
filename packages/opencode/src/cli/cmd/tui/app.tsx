@@ -259,6 +259,14 @@ function App() {
   const [alerts, setAlerts] = createSignal(kv.get("task_completion_notification_enabled", true))
   const [bells, setBells] = createSignal(kv.get("task_completion_sound_enabled", true))
 
+  const title = (sessionID?: string) => {
+    if (!sessionID) return "OpenCode"
+    const session = sync.session.get(sessionID)
+    if (!session || SessionApi.isDefaultTitle(session.title)) return "OpenCode"
+    const text = session.title.length > 40 ? session.title.slice(0, 37) + "..." : session.title
+    return `OC | ${text}`
+  }
+
   createEffect(() => {
     console.log(JSON.stringify(route.data))
   })
@@ -273,15 +281,7 @@ function App() {
     }
 
     if (route.data.type === "session") {
-      const session = sync.session.get(route.data.sessionID)
-      if (!session || SessionApi.isDefaultTitle(session.title)) {
-        renderer.setTerminalTitle("OpenCode")
-        return
-      }
-
-      // Truncate title to 40 chars max
-      const title = session.title.length > 40 ? session.title.slice(0, 37) + "..." : session.title
-      renderer.setTerminalTitle(`OC | ${title}`)
+      renderer.setTerminalTitle(title(route.data.sessionID))
     }
   })
 
@@ -729,20 +729,69 @@ function App() {
     }).exited.catch(() => {})
   }
 
-  const ding = () => {
+  const focused = async (sessionID: string) => {
+    if (process.platform !== "linux") return false
+    const dbus = Bun.which("qdbus")
+    if (!dbus) return false
+    const proc = Bun.spawn([dbus, "org.kde.KWin", "/KWin", "org.kde.KWin.queryWindowInfo"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    await proc.exited.catch(() => {})
+    if (!proc.stdout) return false
+    const out = await new Response(proc.stdout).text().catch(() => "")
+    const line = out
+      .split("\n")
+      .find((x) => x.startsWith("caption: "))
+    if (!line) return false
+    const cap = line.slice("caption: ".length)
+    const text = title(sessionID)
+    return cap === text || cap.includes(text)
+  }
+
+  const notify = (sessionID: string) => {
+    const send = Bun.which("notify-send")
+    if (!send) return
+    const text = title(sessionID)
+    const focus = Bun.which("wmctrl")
+    if (!focus) {
+      run([send, "-a", "OpenCode", "-h", "string:sound-name:message-new-instant", "Task completed", text])
+      return
+    }
+
+    const proc = Bun.spawn(
+      [
+        send,
+        "-a",
+        "OpenCode",
+        "-h",
+        "string:sound-name:message-new-instant",
+        "-A",
+        "open=Open OpenCode",
+        "Task completed",
+        text,
+      ],
+      {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      },
+    )
+    proc.exited
+      .then(async () => {
+        if (!proc.stdout) return
+        const result = (await new Response(proc.stdout).text()).trim()
+        if (result !== "open") return
+        run([focus, "-a", text])
+      })
+      .catch(() => {})
+  }
+
+  const ding = async (sessionID: string) => {
+    if (await focused(sessionID)) return
     if (alerts() && process.platform === "linux") {
-      const notify = Bun.which("notify-send")
-      if (notify) {
-        run([
-          notify,
-          "-a",
-          "OpenCode",
-          "-h",
-          "string:sound-name:message-new-instant",
-          "OpenCode",
-          "Task completed",
-        ])
-      }
+      notify(sessionID)
     }
 
     if (!bells()) return
@@ -763,7 +812,7 @@ function App() {
 
   sdk.event.on("session.status", (evt) => {
     if (evt.properties.status.type !== "idle") return
-    ding()
+    ding(evt.properties.sessionID).catch(() => {})
   })
 
   sdk.event.on(SessionApi.Event.Deleted.type, (evt) => {
