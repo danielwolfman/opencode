@@ -258,7 +258,6 @@ function App() {
   const [terminalTitleEnabled, setTerminalTitleEnabled] = createSignal(kv.get("terminal_title_enabled", true))
   const [alerts, setAlerts] = createSignal(kv.get("task_completion_notification_enabled", true))
   const [bells, setBells] = createSignal(kv.get("task_completion_sound_enabled", true))
-  let tick = 0
 
   createEffect(() => {
     console.log(JSON.stringify(route.data))
@@ -730,13 +729,7 @@ function App() {
     }).exited.catch(() => {})
   }
 
-  const ding = (sessionID: string) => {
-    const session = sync.session.get(sessionID)
-    if (session?.parentID) return
-    const now = Date.now()
-    if (now - tick < 750) return
-    tick = now
-
+  const ding = () => {
     if (alerts() && process.platform === "linux") {
       const notify = Bun.which("notify-send")
       if (notify) {
@@ -770,11 +763,7 @@ function App() {
 
   sdk.event.on("session.status", (evt) => {
     if (evt.properties.status.type !== "idle") return
-    ding(evt.properties.sessionID)
-  })
-
-  sdk.event.on("session.idle", (evt) => {
-    ding(evt.properties.sessionID)
+    ding()
   })
 
   sdk.event.on(SessionApi.Event.Deleted.type, (evt) => {
