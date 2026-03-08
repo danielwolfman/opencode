@@ -256,6 +256,8 @@ function App() {
     renderer.clearSelection()
   }
   const [terminalTitleEnabled, setTerminalTitleEnabled] = createSignal(kv.get("terminal_title_enabled", true))
+  const [bells, setBells] = createSignal(kv.get("task_completion_sound_enabled", true))
+  let bell = 0
 
   createEffect(() => {
     console.log(JSON.stringify(route.data))
@@ -657,6 +659,19 @@ function App() {
         dialog.clear()
       },
     },
+    {
+      title: bells() ? "Disable completion sound" : "Enable completion sound",
+      value: "app.toggle.completion_sound",
+      category: "System",
+      onSelect: (dialog) => {
+        setBells((prev) => {
+          const next = !prev
+          kv.set("task_completion_sound_enabled", next)
+          return next
+        })
+        dialog.clear()
+      },
+    },
   ])
 
   createEffect(() => {
@@ -691,6 +706,17 @@ function App() {
       type: "session",
       sessionID: evt.properties.sessionID,
     })
+  })
+
+  sdk.event.on("session.idle", (evt) => {
+    if (!bells()) return
+    if (!process.stdout.isTTY) return
+    const session = sync.session.get(evt.properties.sessionID)
+    if (session?.parentID) return
+    const now = Date.now()
+    if (now - bell < 750) return
+    bell = now
+    process.stdout.write("\u0007")
   })
 
   sdk.event.on(SessionApi.Event.Deleted.type, (evt) => {
