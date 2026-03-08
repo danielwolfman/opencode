@@ -256,8 +256,9 @@ function App() {
     renderer.clearSelection()
   }
   const [terminalTitleEnabled, setTerminalTitleEnabled] = createSignal(kv.get("terminal_title_enabled", true))
+  const [alerts, setAlerts] = createSignal(kv.get("task_completion_notification_enabled", true))
   const [bells, setBells] = createSignal(kv.get("task_completion_sound_enabled", true))
-  let bell = 0
+  let tick = 0
 
   createEffect(() => {
     console.log(JSON.stringify(route.data))
@@ -672,6 +673,19 @@ function App() {
         dialog.clear()
       },
     },
+    {
+      title: alerts() ? "Disable completion notification" : "Enable completion notification",
+      value: "app.toggle.completion_notification",
+      category: "System",
+      onSelect: (dialog) => {
+        setAlerts((prev) => {
+          const next = !prev
+          kv.set("task_completion_notification_enabled", next)
+          return next
+        })
+        dialog.clear()
+      },
+    },
   ])
 
   createEffect(() => {
@@ -708,14 +722,50 @@ function App() {
     })
   })
 
+  const run = (cmd: string[]) => {
+    Bun.spawn(cmd, {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exited.catch(() => {})
+  }
+
   const ding = (sessionID: string) => {
-    if (!bells()) return
     const session = sync.session.get(sessionID)
     if (session?.parentID) return
     const now = Date.now()
-    if (now - bell < 750) return
-    bell = now
-    process.stdout.write("\u0007")
+    if (now - tick < 750) return
+    tick = now
+
+    if (alerts() && process.platform === "linux") {
+      const notify = Bun.which("notify-send")
+      if (notify) {
+        run([
+          notify,
+          "-a",
+          "OpenCode",
+          "-h",
+          "string:sound-name:message-new-instant",
+          "OpenCode",
+          "Task completed",
+        ])
+      }
+    }
+
+    if (!bells()) return
+    if (process.platform === "linux") {
+      const play = Bun.which("canberra-gtk-play")
+      if (play) {
+        run([play, "-i", "complete", "-d", "OpenCode"])
+      }
+      if (!play) {
+        const pulse = Bun.which("paplay")
+        if (pulse) {
+          run([pulse, "/usr/share/sounds/freedesktop/stereo/complete.oga"])
+        }
+      }
+    }
+    if (process.stdout.isTTY) process.stdout.write("\u0007")
   }
 
   sdk.event.on("session.status", (evt) => {
