@@ -708,15 +708,23 @@ function App() {
     })
   })
 
-  sdk.event.on("session.idle", (evt) => {
+  const ding = (sessionID: string) => {
     if (!bells()) return
-    if (!process.stdout.isTTY) return
-    const session = sync.session.get(evt.properties.sessionID)
+    const session = sync.session.get(sessionID)
     if (session?.parentID) return
     const now = Date.now()
     if (now - bell < 750) return
     bell = now
     process.stdout.write("\u0007")
+  }
+
+  sdk.event.on("session.status", (evt) => {
+    if (evt.properties.status.type !== "idle") return
+    ding(evt.properties.sessionID)
+  })
+
+  sdk.event.on("session.idle", (evt) => {
+    ding(evt.properties.sessionID)
   })
 
   sdk.event.on(SessionApi.Event.Deleted.type, (evt) => {
