@@ -35,6 +35,7 @@ import { Command } from "../command"
 import { $ } from "bun"
 import { pathToFileURL, fileURLToPath } from "url"
 import { ConfigMarkdown } from "../config/markdown"
+import { Config } from "../config/config"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
@@ -779,6 +780,11 @@ export namespace SessionPrompt {
         return [`${msg.info.role === "assistant" && msg.info.summary ? "Summary" : msg.info.role}: ${text.slice(0, 800)}`]
       })
       .join("\n\n")
+  }
+
+  export function titleDue(input: { turns: number; interval: number; state?: { turn?: number } }) {
+    if (!input.state?.turn) return true
+    return input.turns >= input.state.turn + input.interval
   }
 
   async function compact(input: CommandInput) {
@@ -1986,6 +1992,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const session = await Session.get(input.sessionID)
     if (session.parentID) return
     if (!(await Session.shouldAutoTitle({ sessionID: session.id, title: session.title }))) return
+    const turns = input.history.filter(isReal).length
+    if (!turns) return
+
+    const interval = (await Config.get()).title?.interval ?? 10
+    const state = await Session.titleState(session.id)
+    if (!titleDue({ turns, interval, state })) return
 
     const context = titleText(input.history)
     if (!context) return
@@ -2031,7 +2043,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const latest = await Session.get(session.id)
       if (!(await Session.shouldAutoTitle({ sessionID: latest.id, title: latest.title }))) return
       if (latest.title === title) return
-      return Session.setTitle({ sessionID: session.id, title, auto: true })
+      return Session.setTitle({ sessionID: session.id, title, auto: true, turn: turns })
     }
   }
 }

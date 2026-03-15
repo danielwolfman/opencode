@@ -1079,6 +1079,17 @@ export namespace Config {
       small_model: ModelId.describe(
         "Small model to use for tasks like title generation in the format of provider/model",
       ).optional(),
+      title: z
+        .object({
+          interval: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Minimum number of real user turns between automatic title refreshes (default: 10)"),
+        })
+        .optional()
+        .describe("Session title generation settings"),
       default_agent: z
         .string()
         .optional()

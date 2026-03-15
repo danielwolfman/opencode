@@ -49,8 +49,8 @@ export namespace Session {
     ).test(title)
   }
 
-  async function titleState(sessionID: SessionID) {
-    return Storage.read<{ auto?: boolean }>(["session_title", sessionID]).catch(() => undefined)
+  export async function titleState(sessionID: SessionID) {
+    return Storage.read<{ auto?: boolean; turn?: number }>(["session_title", sessionID]).catch(() => undefined)
   }
 
   export async function shouldAutoTitle(input: { sessionID: SessionID; title: string }) {
@@ -393,6 +393,7 @@ export namespace Session {
       sessionID: SessionID.zod,
       title: z.string(),
       auto: z.boolean().optional(),
+      turn: z.number().int().positive().optional(),
     }),
     async (input) => {
       const info = Database.use((db) => {
@@ -409,7 +410,10 @@ export namespace Session {
       })
 
       if (input.auto !== undefined) {
-        await Storage.write(["session_title", input.sessionID], { auto: input.auto })
+        await Storage.write(["session_title", input.sessionID], {
+          auto: input.auto,
+          turn: input.auto ? input.turn : undefined,
+        })
       }
 
       return info

@@ -3,6 +3,7 @@ import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Command } from "../../src/command"
+import { Config } from "../../src/config/config"
 import { tmpdir } from "../fixture/fixture"
 
 describe("session title management", () => {
@@ -20,9 +21,11 @@ describe("session title management", () => {
           sessionID: session.id,
           title: "Auto title",
           auto: true,
+          turn: 1,
         })
 
         expect(await Session.shouldAutoTitle({ sessionID: auto.id, title: auto.title })).toBe(true)
+        expect(await Session.titleState(session.id)).toEqual({ auto: true, turn: 1 })
 
         const manual = await Session.setTitle({
           sessionID: session.id,
@@ -64,5 +67,21 @@ describe("session title management", () => {
         await Session.remove(session.id)
       },
     })
+  })
+
+  test("only refreshes titles every configured number of turns", () => {
+    expect(SessionPrompt.titleDue({ turns: 1, interval: 10 })).toBe(true)
+    expect(SessionPrompt.titleDue({ turns: 10, interval: 10, state: { turn: 1 } })).toBe(false)
+    expect(SessionPrompt.titleDue({ turns: 11, interval: 10, state: { turn: 1 } })).toBe(true)
+  })
+
+  test("accepts title refresh interval in config", () => {
+    const parsed = Config.Info.parse({
+      title: {
+        interval: 7,
+      },
+    })
+
+    expect(parsed.title?.interval).toBe(7)
   })
 })
