@@ -456,7 +456,6 @@ export function Session() {
       category: "Session",
       slash: {
         name: "compact",
-        aliases: ["summarize"],
       },
       onSelect: (dialog) => {
         const selectedModel = local.model.current()

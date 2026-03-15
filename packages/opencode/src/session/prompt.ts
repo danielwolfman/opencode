@@ -330,7 +330,7 @@ export namespace SessionPrompt {
       step++
       if (step === 1)
         ensureTitle({
-          session,
+          sessionID,
           modelID: lastUser.model.modelID,
           providerID: lastUser.model.providerID,
           history: msgs,
@@ -738,6 +738,77 @@ export namespace SessionPrompt {
       if (item.info.role === "user" && item.info.model) return item.info.model
     }
     return Provider.defaultModel()
+  }
+
+  function isReal(msg: MessageV2.WithParts) {
+    if (msg.info.role !== "user") return false
+    return msg.parts.some((part) => part.type !== "compaction" && !("synthetic" in part && part.synthetic))
+  }
+
+  function titleMessages(history: MessageV2.WithParts[]) {
+    if (history.filter(isReal).length <= 1) {
+      const idx = history.findIndex(isReal)
+      return idx === -1 ? [] : history.slice(0, idx + 1)
+    }
+
+    const tail = history.slice(-8)
+    const idx = history.findLastIndex(
+      (msg) => msg.info.role === "assistant" && msg.info.summary === true && msg.info.finish && !msg.info.error,
+    )
+    if (idx === -1) return tail
+    return [history[idx], ...tail.filter((msg) => msg.info.id !== history[idx].info.id)]
+  }
+
+  function titleText(history: MessageV2.WithParts[]) {
+    return titleMessages(history)
+      .flatMap((msg) => {
+        const text = msg.parts
+          .flatMap((part) => {
+            if (part.type === "text") {
+              if ("synthetic" in part && part.synthetic) return []
+              return [part.text]
+            }
+            if (part.type === "subtask") return [part.prompt]
+            if (part.type === "file" && part.filename) return [`Attached file: ${part.filename}`]
+            return []
+          })
+          .join("\n")
+          .replace(/\s+/g, " ")
+          .trim()
+        if (!text) return []
+        return [`${msg.info.role === "assistant" && msg.info.summary ? "Summary" : msg.info.role}: ${text.slice(0, 800)}`]
+      })
+      .join("\n\n")
+  }
+
+  async function compact(input: CommandInput) {
+    const last = await lastModel(input.sessionID)
+    const model = input.model
+      ? (() => {
+          const parsed = Provider.parseModel(input.model!)
+          return {
+            providerID: ProviderID.make(parsed.providerID),
+            modelID: ModelID.make(parsed.modelID),
+          }
+        })()
+      : {
+          providerID: ProviderID.make(last.providerID),
+          modelID: ModelID.make(last.modelID),
+        }
+    const msg = await SessionCompaction.create({
+      sessionID: input.sessionID,
+      agent: input.agent ?? (await Agent.defaultAgent()),
+      model,
+      auto: false,
+    })
+    const result = await MessageV2.get({ sessionID: msg.sessionID, messageID: msg.id })
+    Bus.publish(Command.Event.Executed, {
+      name: input.command,
+      sessionID: input.sessionID,
+      arguments: input.arguments,
+      messageID: result.info.id,
+    })
+    return result
   }
 
   /** @internal Exported for testing */
@@ -1754,7 +1825,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
   export async function command(input: CommandInput) {
     log.info("command", input)
+    if (input.command === Command.Default.SUMMARIZE) return compact(input)
+
     const command = await Command.get(input.command)
+    if (!command) {
+      const error = new NamedError.Unknown({ message: `Command not found: \"${input.command}\"` })
+      Bus.publish(Session.Event.Error, {
+        sessionID: input.sessionID,
+        error: error.toObject(),
+      })
+      throw error
+    }
     const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
 
     const raw = input.arguments.match(argsRegex) ?? []
@@ -1897,34 +1978,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   }
 
   async function ensureTitle(input: {
-    session: Session.Info
+    sessionID: SessionID
     history: MessageV2.WithParts[]
     providerID: ProviderID
     modelID: ModelID
   }) {
-    if (input.session.parentID) return
-    if (!Session.isDefaultTitle(input.session.title)) return
+    const session = await Session.get(input.sessionID)
+    if (session.parentID) return
+    if (!(await Session.shouldAutoTitle({ sessionID: session.id, title: session.title }))) return
 
-    // Find first non-synthetic user message
-    const firstRealUserIdx = input.history.findIndex(
-      (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
-    )
-    if (firstRealUserIdx === -1) return
+    const context = titleText(input.history)
+    if (!context) return
 
-    const isFirst =
-      input.history.filter((m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic))
-        .length === 1
-    if (!isFirst) return
-
-    // Gather all messages up to and including the first real user message for context
-    // This includes any shell/subtask executions that preceded the user's first prompt
-    const contextMessages = input.history.slice(0, firstRealUserIdx + 1)
-    const firstRealUser = contextMessages[firstRealUserIdx]
-
-    // For subtask-only messages (from command invocations), extract the prompt directly
-    // since toModelMessage converts subtask parts to generic "The following tool was executed by the user"
-    const subtaskParts = firstRealUser.parts.filter((p) => p.type === "subtask") as MessageV2.SubtaskPart[]
-    const hasOnlySubtaskParts = subtaskParts.length > 0 && firstRealUser.parts.every((p) => p.type === "subtask")
+    const user = input.history.findLast((msg) => msg.info.role === "user")?.info
+    if (!user || user.role !== "user") return
 
     const agent = await Agent.get("title")
     if (!agent) return
@@ -1936,22 +2003,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
     const result = await LLM.stream({
       agent,
-      user: firstRealUser.info as MessageV2.User,
+      user,
       system: [],
       small: true,
       tools: {},
       model,
       abort: new AbortController().signal,
-      sessionID: input.session.id,
+      sessionID: session.id,
       retries: 2,
       messages: [
         {
           role: "user",
-          content: "Generate a title for this conversation:\n",
+          content: ["Generate a title for this conversation:", "", context].join("\n"),
         },
-        ...(hasOnlySubtaskParts
-          ? [{ role: "user" as const, content: subtaskParts.map((p) => p.prompt).join("\n") }]
-          : MessageV2.toModelMessages(contextMessages, model)),
       ],
     })
     const text = await result.text.catch((err) => log.error("failed to generate title", { error: err }))
@@ -1964,7 +2028,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (!cleaned) return
 
       const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
-      return Session.setTitle({ sessionID: input.session.id, title })
+      const latest = await Session.get(session.id)
+      if (!(await Session.shouldAutoTitle({ sessionID: latest.id, title: latest.title }))) return
+      if (latest.title === title) return
+      return Session.setTitle({ sessionID: session.id, title, auto: true })
     }
   }
 }

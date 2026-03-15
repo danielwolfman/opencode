@@ -324,6 +324,7 @@ When constructing the summary, try to stick to this template:
         auto: input.auto,
         overflow: input.overflow,
       })
+      return msg
     },
   )
 }

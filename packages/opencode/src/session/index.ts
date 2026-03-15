@@ -49,6 +49,16 @@ export namespace Session {
     ).test(title)
   }
 
+  async function titleState(sessionID: SessionID) {
+    return Storage.read<{ auto?: boolean }>(["session_title", sessionID]).catch(() => undefined)
+  }
+
+  export async function shouldAutoTitle(input: { sessionID: SessionID; title: string }) {
+    if (isDefaultTitle(input.title)) return true
+    const state = await titleState(input.sessionID)
+    return state?.auto === true
+  }
+
   type SessionRow = typeof SessionTable.$inferSelect
 
   export function fromRow(row: SessionRow): Info {
@@ -382,9 +392,10 @@ export namespace Session {
     z.object({
       sessionID: SessionID.zod,
       title: z.string(),
+      auto: z.boolean().optional(),
     }),
     async (input) => {
-      return Database.use((db) => {
+      const info = Database.use((db) => {
         const row = db
           .update(SessionTable)
           .set({ title: input.title })
@@ -396,6 +407,12 @@ export namespace Session {
         Database.effect(() => Bus.publish(Event.Updated, { info }))
         return info
       })
+
+      if (input.auto !== undefined) {
+        await Storage.write(["session_title", input.sessionID], { auto: input.auto })
+      }
+
+      return info
     },
   )
 
@@ -669,6 +686,7 @@ export namespace Session {
         await remove(child.id)
       }
       await unshare(sessionID).catch(() => {})
+      await Storage.remove(["session_title", sessionID]).catch(() => {})
       // CASCADE delete handles messages and parts automatically
       Database.use((db) => {
         db.delete(SessionTable).where(eq(SessionTable.id, sessionID)).run()

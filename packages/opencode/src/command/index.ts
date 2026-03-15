@@ -55,6 +55,7 @@ export namespace Command {
   export const Default = {
     INIT: "init",
     REVIEW: "review",
+    SUMMARIZE: "summarize",
   } as const
 
   const state = Instance.state(async () => {
@@ -79,6 +80,13 @@ export namespace Command {
         },
         subtask: true,
         hints: hints(PROMPT_REVIEW),
+      },
+      [Default.SUMMARIZE]: {
+        name: Default.SUMMARIZE,
+        description: "summarize the current session",
+        source: "command",
+        template: "",
+        hints: [],
       },
     }
 
