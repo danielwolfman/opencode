@@ -5,6 +5,8 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { Command } from "../../src/command"
 import { Config } from "../../src/config/config"
 import { tmpdir } from "../fixture/fixture"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, PartID, SessionID } from "../../src/session/schema"
 
 describe("session title management", () => {
   test("keeps auto-managed titles updating until manually renamed", async () => {
@@ -40,31 +42,14 @@ describe("session title management", () => {
     })
   })
 
-  test("summarize command queues session compaction", async () => {
+  test("registers summarize command", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const session = await Session.create({})
         const cmds = await Command.list()
-
         expect(cmds.some((cmd) => cmd.name === Command.Default.SUMMARIZE)).toBe(true)
-
-        const msg = await SessionPrompt.command({
-          sessionID: session.id,
-          command: Command.Default.SUMMARIZE,
-          arguments: "",
-          model: "opencode/kimi-k2.5-free",
-        })
-
-        expect(msg.info.role).toBe("user")
-        expect(msg.parts).toHaveLength(1)
-        expect(msg.parts[0]?.type).toBe("compaction")
-        if (msg.parts[0]?.type !== "compaction") throw new Error("expected compaction part")
-        expect(msg.parts[0].auto).toBe(false)
-
-        await Session.remove(session.id)
       },
     })
   })
@@ -83,5 +68,43 @@ describe("session title management", () => {
     })
 
     expect(parsed.title?.interval).toBe(7)
+  })
+
+  test("uses whole short conversation for title context", () => {
+    const sid = SessionID.make("ses_test")
+    const mk = (id: string, role: "user" | "assistant", text: string) =>
+      ({
+        info: {
+          id: MessageID.make(id),
+          sessionID: sid,
+          role,
+          time: { created: 0 },
+        },
+        parts: [
+          {
+            id: PartID.make(`prt_${id}`),
+            messageID: MessageID.make(id),
+            sessionID: sid,
+            type: "text",
+            text,
+            time: { start: 0, end: 0 },
+          },
+        ],
+      }) as MessageV2.WithParts
+
+    const text = SessionPrompt.titleText([
+      mk("msg_1", "user", "hello"),
+      mk("msg_2", "assistant", "Greeting"),
+      mk("msg_3", "user", "lets talk about weather"),
+      mk("msg_4", "assistant", "Weather can be sunny or rainy"),
+      mk("msg_5", "user", "tell me about basketball teams"),
+      mk("msg_6", "assistant", "Basketball teams play indoors"),
+      mk("msg_7", "user", "tell me about olympics"),
+      mk("msg_8", "assistant", "The Olympics are a major sports event"),
+    ])
+
+    expect(text).toContain("user: lets talk about weather")
+    expect(text).toContain("user: tell me about basketball teams")
+    expect(text).toContain("user: tell me about olympics")
   })
 })

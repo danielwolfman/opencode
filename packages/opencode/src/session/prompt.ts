@@ -753,6 +753,8 @@ export namespace SessionPrompt {
       return idx === -1 ? [] : history.slice(0, idx + 1)
     }
 
+    if (history.length <= 24) return history
+
     const tail = history.slice(-8)
     const idx = history.findLastIndex(
       (msg) => msg.info.role === "assistant" && msg.info.summary === true && msg.info.finish && !msg.info.error,
@@ -761,7 +763,7 @@ export namespace SessionPrompt {
     return [history[idx], ...tail.filter((msg) => msg.info.id !== history[idx].info.id)]
   }
 
-  function titleText(history: MessageV2.WithParts[]) {
+  export function titleText(history: MessageV2.WithParts[]) {
     return titleMessages(history)
       .flatMap((msg) => {
         const text = msg.parts
@@ -788,27 +790,22 @@ export namespace SessionPrompt {
     return input.turns >= input.state.turn + input.interval
   }
 
-  async function compact(input: CommandInput) {
+  async function retitle(input: CommandInput) {
+    const history = await Session.messages({ sessionID: input.sessionID })
     const last = await lastModel(input.sessionID)
-    const model = input.model
-      ? (() => {
-          const parsed = Provider.parseModel(input.model!)
-          return {
-            providerID: ProviderID.make(parsed.providerID),
-            modelID: ModelID.make(parsed.modelID),
-          }
-        })()
-      : {
-          providerID: ProviderID.make(last.providerID),
-          modelID: ModelID.make(last.modelID),
-        }
-    const msg = await SessionCompaction.create({
+    await ensureTitle({
       sessionID: input.sessionID,
-      agent: input.agent ?? (await Agent.defaultAgent()),
-      model,
-      auto: false,
+      history,
+      providerID: ProviderID.make(last.providerID),
+      modelID: ModelID.make(last.modelID),
+      force: true,
     })
-    const result = await MessageV2.get({ sessionID: msg.sessionID, messageID: msg.id })
+
+    const result = history.findLast((msg) => msg.info.role === "assistant")
+    if (!result || result.info.role !== "assistant") {
+      throw new NamedError.Unknown({ message: "Nothing to summarize yet" })
+    }
+
     Bus.publish(Command.Event.Executed, {
       name: input.command,
       sessionID: input.sessionID,
@@ -1832,7 +1829,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
   export async function command(input: CommandInput) {
     log.info("command", input)
-    if (input.command === Command.Default.SUMMARIZE) return compact(input)
+    if (input.command === Command.Default.SUMMARIZE) return retitle(input)
 
     const command = await Command.get(input.command)
     if (!command) {
@@ -1989,6 +1986,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     history: MessageV2.WithParts[]
     providerID: ProviderID
     modelID: ModelID
+    force?: boolean
   }) {
     const session = await Session.get(input.sessionID)
     if (session.parentID) return
@@ -1996,9 +1994,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const turns = input.history.filter(isReal).length
     if (!turns) return
 
-    const interval = (await Config.get()).title?.interval ?? 10
-    const state = await Session.titleState(session.id)
-    if (!titleDue({ turns, interval, state })) return
+    if (!input.force) {
+      const interval = (await Config.get()).title?.interval ?? 10
+      const state = await Session.titleState(session.id)
+      if (!titleDue({ turns, interval, state })) return
+    }
 
     const context = titleText(input.history)
     if (!context) return

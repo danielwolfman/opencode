@@ -83,7 +83,7 @@ export namespace Command {
       },
       [Default.SUMMARIZE]: {
         name: Default.SUMMARIZE,
-        description: "summarize the current session",
+        description: "refresh session title from conversation context",
         source: "command",
         template: "",
         hints: [],
