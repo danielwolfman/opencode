@@ -4,8 +4,6 @@ import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Command } from "../../src/command"
 import { Config } from "../../src/config/config"
-import { MessageV2 } from "../../src/session/message-v2"
-import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
 
 describe("session title management", () => {
@@ -85,43 +83,5 @@ describe("session title management", () => {
     })
 
     expect(parsed.title?.interval).toBe(7)
-  })
-
-  test("builds title context from summary plus recent turns", () => {
-    const sid = SessionID.make("ses_test")
-    const mk = (id: string, role: "user" | "assistant", text: string, opts?: { summary?: boolean }) =>
-      ({
-        info: {
-          id: MessageID.make(id),
-          sessionID: sid,
-          role,
-          time: { created: 0 },
-          ...(opts?.summary ? { summary: true, finish: "stop" } : {}),
-        },
-        parts: [
-          {
-            id: PartID.make(`prt_${id}`),
-            messageID: MessageID.make(id),
-            sessionID: sid,
-            type: "text",
-            text,
-            time: { start: 0, end: 0 },
-          },
-        ],
-      }) as MessageV2.WithParts
-
-    const text = SessionPrompt.titleText([
-      mk("msg_1", "user", "hello"),
-      mk("msg_2", "assistant", "Greeting"),
-      mk("msg_3", "assistant", "Conversation moved from weather to basketball and now to the Olympics.", {
-        summary: true,
-      }),
-      mk("msg_4", "user", "tell me about olympics"),
-    ])
-
-    expect(text).toContain("Overall conversation summary:")
-    expect(text).toContain("Conversation moved from weather to basketball and now to the Olympics.")
-    expect(text).toContain("Recent turns:")
-    expect(text).toContain("user: tell me about olympics")
   })
 })

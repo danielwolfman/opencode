@@ -753,52 +753,34 @@ export namespace SessionPrompt {
       return idx === -1 ? [] : history.slice(0, idx + 1)
     }
 
-    return history.slice(-8)
-  }
-
-  function titleItem(msg: MessageV2.WithParts) {
-    const text = msg.parts
-      .flatMap((part) => {
-        if (part.type === "text") {
-          if ("synthetic" in part && part.synthetic) return []
-          return [part.text]
-        }
-        if (part.type === "subtask") return [part.prompt]
-        if (part.type === "file" && part.filename) return [`Attached file: ${part.filename}`]
-        return []
-      })
-      .join("\n")
-      .replace(/\s+/g, " ")
-      .trim()
-    if (!text) return
-    return `${msg.info.role}: ${text.slice(0, 800)}`
-  }
-
-  export function titleText(history: MessageV2.WithParts[]) {
-    const sum = history.findLast(
+    const tail = history.slice(-8)
+    const idx = history.findLastIndex(
       (msg) => msg.info.role === "assistant" && msg.info.summary === true && msg.info.finish && !msg.info.error,
     )
+    if (idx === -1) return tail
+    return [history[idx], ...tail.filter((msg) => msg.info.id !== history[idx].info.id)]
+  }
 
-    const parts = []
-    if (sum) {
-      const text = titleItem(sum)
-      if (text) parts.push(["Overall conversation summary:", text].join("\n"))
-    }
-
-    const start = history.find(isReal)
-    if (!sum && start) {
-      const text = titleItem(start)
-      if (text) parts.push(["Conversation start:", text].join("\n"))
-    }
-
-    const recent = titleMessages(history).flatMap((msg) => {
-      const text = titleItem(msg)
-      if (!text) return []
-      return [text]
-    })
-    if (recent.length) parts.push(["Recent turns:", recent.join("\n\n")].join("\n"))
-
-    return parts.join("\n\n")
+  function titleText(history: MessageV2.WithParts[]) {
+    return titleMessages(history)
+      .flatMap((msg) => {
+        const text = msg.parts
+          .flatMap((part) => {
+            if (part.type === "text") {
+              if ("synthetic" in part && part.synthetic) return []
+              return [part.text]
+            }
+            if (part.type === "subtask") return [part.prompt]
+            if (part.type === "file" && part.filename) return [`Attached file: ${part.filename}`]
+            return []
+          })
+          .join("\n")
+          .replace(/\s+/g, " ")
+          .trim()
+        if (!text) return []
+        return [`${msg.info.role === "assistant" && msg.info.summary ? "Summary" : msg.info.role}: ${text.slice(0, 800)}`]
+      })
+      .join("\n\n")
   }
 
   export function titleDue(input: { turns: number; interval: number; state?: { turn?: number } }) {
@@ -2045,13 +2027,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       messages: [
         {
           role: "user",
-          content: [
-            "Generate a title for this conversation using the whole thread context.",
-            "Prioritize the overall summary when present, and use recent turns only to detect clear topic changes.",
-            "Do not base the title on just the last message.",
-            "",
-            context,
-          ].join("\n"),
+          content: ["Generate a title for this conversation:", "", context].join("\n"),
         },
       ],
     })
