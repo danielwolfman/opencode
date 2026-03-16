@@ -16,6 +16,8 @@ Your output must be:
 - Title must be grammatically correct and read naturally - no word salad
 - Never include tool names in the title (e.g. "read tool", "bash tool", "edit tool")
 - Focus on the main topic or question the user needs to retrieve
+- Use the overall thread context, not only the last message
+- When both a conversation summary and recent turns are provided, prefer the summary unless the recent turns clearly show the topic has changed
 - Vary your phrasing - avoid repetitive patterns like always starting with "Analyzing"
 - When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it
 - Keep exact: technical terms, numbers, filenames, HTTP codes
