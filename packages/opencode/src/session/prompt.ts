@@ -28,6 +28,7 @@ import { MCP } from "../mcp"
 import { LSP } from "../lsp"
 import { ReadTool } from "../tool/read"
 import { FileTime } from "../file/time"
+import { NotFoundError } from "@/storage/db"
 import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
 import { spawn } from "child_process"
@@ -2064,10 +2065,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (!cleaned) return
 
       const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
-      const latest = await Session.get(session.id)
+      const latest = await Session.get(session.id).catch((err) => {
+        if (NotFoundError.isInstance(err)) return
+        throw err
+      })
+      if (!latest) return
       if (!(await Session.shouldAutoTitle({ sessionID: latest.id, title: latest.title }))) return
       if (latest.title === title) return
-      return Session.setTitle({ sessionID: session.id, title, auto: true, turn: turns })
+      return Session.setTitle({ sessionID: session.id, title, auto: true, turn: turns }).catch((err) => {
+        if (NotFoundError.isInstance(err)) return
+        throw err
+      })
     }
   }
 }
