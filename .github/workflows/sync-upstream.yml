@@ -33,6 +33,46 @@ jobs:
           git checkout dev
           git pull --ff-only origin dev
 
+          keep_ours() {
+            local file="$1"
+            local item
+            for item in \
+              packages/opencode/script/codex-usage.ts \
+              packages/opencode/src/agent/agent.ts \
+              packages/opencode/src/agent/prompt/title.txt \
+              packages/opencode/src/cli/cmd/auth.ts \
+              packages/opencode/src/cli/cmd/providers.ts \
+              packages/opencode/src/cli/cmd/tui/component/dialog-session-list.tsx \
+              packages/opencode/src/cli/cmd/tui/component/dialog-status.tsx \
+              packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx \
+              packages/opencode/src/cli/cmd/tui/routes/session/header.tsx \
+              packages/opencode/src/cli/cmd/tui/routes/session/index.tsx \
+              packages/opencode/src/cli/cmd/tui/routes/session/sidebar.tsx \
+              packages/opencode/src/cli/cmd/tui/util/codex-usage.ts \
+              packages/opencode/src/cli/cmd/upgrade.ts \
+              packages/opencode/src/command/index.ts \
+              packages/opencode/src/config/config.ts \
+              packages/opencode/src/installation/index.ts \
+              packages/opencode/src/plugin/codex.ts \
+              packages/opencode/src/provider/profile.ts \
+              packages/opencode/src/provider/provider.ts \
+              packages/opencode/src/provider/transform.ts \
+              packages/opencode/src/server/routes/session.ts \
+              packages/opencode/src/session/compaction.ts \
+              packages/opencode/src/session/index.ts \
+              packages/opencode/src/session/llm.ts \
+              packages/opencode/src/session/prompt.ts \
+              packages/opencode/test/provider/profile.test.ts \
+              packages/opencode/test/provider/provider.test.ts \
+              packages/opencode/test/provider/transform.test.ts \
+              packages/opencode/test/session/title.test.ts; do
+              if [ "$file" = "$item" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           base="$(git rev-parse HEAD)"
           if ! git merge --no-edit upstream/dev; then
             for file in $(git diff --name-only --diff-filter=U); do
@@ -40,19 +80,22 @@ jobs:
                 .github/workflows/sync-upstream.yml|.github/workflows/fork-auto-release.yml)
                   git checkout --ours -- "$file"
                   git add "$file"
+                  continue
                   ;;
                 .github/workflows/*)
                   git rm "$file"
-                  ;;
-                packages/opencode/src/agent/agent.ts|packages/opencode/src/cli/cmd/auth.ts|packages/opencode/src/cli/cmd/providers.ts|packages/opencode/src/plugin/codex.ts|packages/opencode/src/provider/provider.ts|packages/opencode/src/cli/cmd/tui/routes/session/header.tsx|packages/opencode/src/installation/index.ts|packages/opencode/src/session/llm.ts|packages/opencode/src/session/prompt.ts)
-                  git checkout --ours -- "$file"
-                  git add "$file"
-                  ;;
-                *)
-                  echo "Unhandled merge conflict in $file"
-                  exit 1
+                  continue
                   ;;
               esac
+
+              if keep_ours "$file"; then
+                git checkout --ours -- "$file"
+                git add "$file"
+                continue
+              fi
+
+              echo "Unhandled merge conflict in $file"
+              exit 1
             done
 
             git commit -m "chore(fork): auto-resolve workflow merge conflicts"
