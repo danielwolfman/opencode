@@ -44,7 +44,7 @@ jobs:
                 .github/workflows/*)
                   git rm "$file"
                   ;;
-                packages/opencode/src/cli/cmd/auth.ts|packages/opencode/src/cli/cmd/providers.ts|packages/opencode/src/plugin/codex.ts|packages/opencode/src/provider/provider.ts|packages/opencode/src/cli/cmd/tui/routes/session/header.tsx|packages/opencode/src/installation/index.ts|packages/opencode/src/session/prompt.ts)
+                packages/opencode/src/agent/agent.ts|packages/opencode/src/cli/cmd/auth.ts|packages/opencode/src/cli/cmd/providers.ts|packages/opencode/src/plugin/codex.ts|packages/opencode/src/provider/provider.ts|packages/opencode/src/cli/cmd/tui/routes/session/header.tsx|packages/opencode/src/installation/index.ts|packages/opencode/src/session/llm.ts|packages/opencode/src/session/prompt.ts)
                   git checkout --ours -- "$file"
                   git add "$file"
                   ;;
