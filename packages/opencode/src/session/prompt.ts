@@ -42,7 +42,7 @@ import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
-import { PermissionNext } from "@/permission"
+import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
@@ -169,7 +169,7 @@ export namespace SessionPrompt {
 
     // this is backwards compatibility for allowing `tools` to be specified when
     // prompting
-    const permissions: PermissionNext.Ruleset = []
+    const permissions: Permission.Ruleset = []
     for (const [tool, enabled] of Object.entries(input.tools ?? {})) {
       permissions.push({
         permission: tool,
@@ -438,10 +438,10 @@ export namespace SessionPrompt {
             } satisfies MessageV2.ToolPart)) as MessageV2.ToolPart
           },
           async ask(req) {
-            await PermissionNext.ask({
+            await Permission.ask({
               ...req,
               sessionID: sessionID,
-              ruleset: PermissionNext.merge(taskAgent.permission, session.permission ?? []),
+              ruleset: Permission.merge(taskAgent.permission, session.permission ?? []),
             })
           },
         }
@@ -855,11 +855,11 @@ export namespace SessionPrompt {
         }
       },
       async ask(req) {
-        await PermissionNext.ask({
+        await Permission.ask({
           ...req,
           sessionID: input.session.id,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-          ruleset: PermissionNext.merge(input.agent.permission, input.session.permission ?? []),
+          ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
         })
       },
     })
@@ -1345,7 +1345,7 @@ export namespace SessionPrompt {
 
         if (part.type === "agent") {
           // Check if this agent would be denied by task permission
-          const perm = PermissionNext.evaluate("task", part.name, agent.permission)
+          const perm = Permission.evaluate("task", part.name, agent.permission)
           const hint = perm.action === "deny" ? " . Invoked by user; guaranteed to exist." : ""
           return [
             {
