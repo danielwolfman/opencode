@@ -85,6 +85,7 @@ jobs:
           OPENCODE_CHANNEL: latest
           OPENCODE_VERSION: ${{ steps.version.outputs.version }}
           OPENCODE_RELEASE: "1"
+          OPENCODE_UPDATE_REPO: ${{ github.repository }}
         run: bun run script/build.ts
 
       - name: Publish release
