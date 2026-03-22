@@ -15,6 +15,8 @@ declare global {
   const OPENCODE_UPDATE_REPO: string | undefined
 }
 
+import semver from "semver"
+
 export namespace Installation {
   const log = Log.create({ service: "installation" })
   const UPDATE_REPO = process.env["OPENCODE_UPDATE_REPO"] || OPENCODE_UPDATE_REPO || "anomalyco/opencode"
@@ -23,6 +25,8 @@ export namespace Installation {
   const UPDATE_BINARY_PATH = process.env["OPENCODE_UPDATE_BINARY_PATH"]
 
   export type Method = Awaited<ReturnType<typeof method>>
+
+  export type ReleaseType = "patch" | "minor" | "major"
 
   export const Event = {
     Updated: BusEvent.define(
@@ -37,6 +41,17 @@ export namespace Installation {
         version: z.string(),
       }),
     ),
+  }
+
+  export function getReleaseType(current: string, latest: string): ReleaseType {
+    const currMajor = semver.major(current)
+    const currMinor = semver.minor(current)
+    const newMajor = semver.major(latest)
+    const newMinor = semver.minor(latest)
+
+    if (newMajor > currMajor) return "major"
+    if (newMinor > currMinor) return "minor"
+    return "patch"
   }
 
   export const Info = z
