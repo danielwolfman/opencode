@@ -1,7 +1,9 @@
 import { test, expect, mock } from "bun:test"
 import { ShareNext } from "../../src/share/share-next"
 import { AccessToken, Account, AccountID, OrgID } from "../../src/account"
+import { Bus } from "../../src/bus"
 import { Config } from "../../src/config/config"
+import { Session } from "../../src/session"
 
 test("ShareNext.request uses legacy share API without active org account", async () => {
   const originalActive = Account.active
@@ -72,5 +74,38 @@ test("ShareNext.request fails when org account has no token", async () => {
   } finally {
     Account.active = originalActive
     Account.token = originalToken
+  }
+})
+
+test("ShareNext.init handles session.updated from event info", async () => {
+  const originalSubscribe = Bus.subscribe
+  const originalTimeout = globalThis.setTimeout
+  const subs = new Map<string, (event: { properties: unknown }) => unknown>()
+
+  Bus.subscribe = mock((def, cb) => {
+    subs.set(def.type, cb as (event: { properties: unknown }) => unknown)
+    return () => {}
+  }) as typeof Bus.subscribe
+  globalThis.setTimeout = mock(() => 0 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout
+
+  try {
+    await ShareNext.init()
+    const sub = subs.get(Session.Event.Updated.type)
+
+    expect(sub).toBeDefined()
+    await expect(
+      Promise.resolve(
+        sub!({
+          properties: {
+            info: {
+              id: "ses_1234567890abcdef1234567890",
+            },
+          },
+        }),
+      ),
+    ).resolves.toBeUndefined()
+  } finally {
+    Bus.subscribe = originalSubscribe
+    globalThis.setTimeout = originalTimeout
   }
 })
