@@ -1,9 +1,6 @@
 name: Fork Auto Release
 
 on:
-  push:
-    branches:
-      - dev
   workflow_run:
     workflows:
       - Sync Upstream
@@ -87,6 +84,18 @@ jobs:
           OPENCODE_RELEASE: "1"
           OPENCODE_UPDATE_REPO: ${{ github.repository }}
         run: bun run script/build.ts
+
+      - name: Build and upload plugin package
+        if: steps.release.outputs.exists != 'true'
+        working-directory: packages/plugin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          OPENCODE_CHANNEL: latest
+          OPENCODE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bun run script/pack.ts
+          gh release upload "${{ steps.version.outputs.tag }}" ./dist/*.tgz --clobber --repo "${GH_REPO}"
 
       - name: Publish release
         if: steps.release.outputs.exists != 'true'

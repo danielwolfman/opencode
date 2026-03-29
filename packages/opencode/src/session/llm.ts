@@ -24,10 +24,32 @@ import { Flag } from "@/flag/flag"
 import { Permission } from "@/permission"
 import { Auth } from "@/auth"
 import { openAIBaseProviderID } from "@/provider/profile"
+import { Effect, Layer, ServiceMap } from "effect"
+import * as Stream from "effect/Stream"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
   export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
+
+  export type Event = Awaited<ReturnType<typeof stream>>["fullStream"] extends AsyncIterable<infer Item> ? Item : never
+
+  export interface Interface {
+    readonly stream: (input: StreamInput) => Stream.Stream<Event, unknown>
+  }
+
+  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/LLM") {}
+
+  export const defaultLayer = Layer.succeed(
+    Service,
+    Service.of({
+      stream: (input) =>
+        Stream.unwrap(
+          Effect.promise(() => stream(input)).pipe(
+            Effect.map((result) => Stream.fromAsyncIterable(result.fullStream, (error) => error)),
+          ),
+        ),
+    }),
+  )
 
   export type StreamInput = {
     user: MessageV2.User

@@ -5,6 +5,7 @@ import { Bus } from "@/bus"
 import { Decimal } from "decimal.js"
 import z from "zod"
 import { type ProviderMetadata } from "ai"
+import { Effect, Layer, ServiceMap } from "effect"
 import { Config } from "../config/config"
 import { Flag } from "../flag/flag"
 import { Installation } from "../installation"
@@ -807,6 +808,27 @@ export namespace Session {
     async (input) => {
       Bus.publish(MessageV2.Event.PartDelta, input)
     },
+  )
+
+  export interface Interface {
+    readonly create: (input: Parameters<typeof create>[0]) => Effect.Effect<Awaited<ReturnType<typeof create>>>
+    readonly updateMessage: (msg: Parameters<typeof updateMessage>[0]) => Effect.Effect<Awaited<ReturnType<typeof updateMessage>>>
+    readonly updatePart: (part: Parameters<typeof updatePart>[0]) => Effect.Effect<Awaited<ReturnType<typeof updatePart>>>
+    readonly updatePartDelta: (
+      input: Parameters<typeof updatePartDelta>[0],
+    ) => Effect.Effect<Awaited<ReturnType<typeof updatePartDelta>>>
+  }
+
+  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Session") {}
+
+  export const defaultLayer = Layer.succeed(
+    Service,
+    Service.of({
+      create: (input) => Effect.promise(() => create(input)),
+      updateMessage: (msg) => Effect.promise(() => updateMessage(msg)),
+      updatePart: (part) => Effect.promise(() => updatePart(part)),
+      updatePartDelta: (input) => Effect.promise(() => updatePartDelta(input)),
+    }),
   )
 
   export const getUsage = fn(

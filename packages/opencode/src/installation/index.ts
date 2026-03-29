@@ -19,7 +19,7 @@ import semver from "semver"
 
 export namespace Installation {
   const log = Log.create({ service: "installation" })
-  const UPDATE_REPO = process.env["OPENCODE_UPDATE_REPO"] || OPENCODE_UPDATE_REPO || "anomalyco/opencode"
+  export const UPDATE_REPO = process.env["OPENCODE_UPDATE_REPO"] || OPENCODE_UPDATE_REPO || "anomalyco/opencode"
   const UPDATE_INSTALL_URL = process.env["OPENCODE_UPDATE_INSTALL_URL"] || "https://opencode.ai/install"
   const UPDATE_NPM_PACKAGE = process.env["OPENCODE_UPDATE_NPM_PACKAGE"] || "opencode-ai"
   const UPDATE_BINARY_PATH = process.env["OPENCODE_UPDATE_BINARY_PATH"]

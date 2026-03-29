@@ -16,6 +16,7 @@ import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { Permission } from "@/permission"
+import { Effect, Layer, ServiceMap } from "effect"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
 import path from "path"
@@ -23,6 +24,19 @@ import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
 
 export namespace Agent {
+  export interface Interface {
+    readonly get: (agent: string) => Effect.Effect<Awaited<ReturnType<typeof get>>>
+  }
+
+  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Agent") {}
+
+  export const defaultLayer = Layer.succeed(
+    Service,
+    Service.of({
+      get: (agent) => Effect.promise(() => get(agent)),
+    }),
+  )
+
   export const Info = z
     .object({
       name: z.string(),

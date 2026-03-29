@@ -90,6 +90,14 @@ export namespace Config {
     waitTick?: (input: { dir: string; attempt: number; delay: number; waited: number }) => void | Promise<void>
   }
 
+  function pluginTarget() {
+    if (Installation.isLocal()) return "*"
+    if (Installation.UPDATE_REPO !== "anomalyco/opencode" && Installation.VERSION.includes("-")) {
+      return `https://github.com/${Installation.UPDATE_REPO}/releases/download/v${Installation.VERSION}/opencode-ai-plugin-${Installation.VERSION}.tgz`
+    }
+    return Installation.VERSION
+  }
+
   export async function installDependencies(dir: string, input?: InstallInput) {
     if (!(await needsInstall(dir))) return
 
@@ -108,7 +116,7 @@ export namespace Config {
     if (!(await needsInstall(dir))) return
 
     const pkg = path.join(dir, "package.json")
-    const target = Installation.isLocal() ? "*" : Installation.VERSION
+    const target = pluginTarget()
 
     const json = await Filesystem.readJson<{ dependencies?: Record<string, string> }>(pkg).catch(() => ({
       dependencies: {},
@@ -199,7 +207,7 @@ export namespace Config {
     const depVersion = dependencies["@opencode-ai/plugin"]
     if (!depVersion) return true
 
-    const targetVersion = Installation.isLocal() ? "latest" : Installation.VERSION
+    const targetVersion = Installation.isLocal() ? "latest" : pluginTarget()
     if (targetVersion === "latest") {
       if (!online()) return false
       const stale = await PackageRegistry.isOutdated("@opencode-ai/plugin", depVersion, dir)
