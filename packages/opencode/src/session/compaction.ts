@@ -20,6 +20,40 @@ import { ModelID, ProviderID } from "@/provider/schema"
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
 
+  function text(msg: MessageV2.WithParts) {
+    return msg.parts
+      .flatMap((part) => {
+        if (part.type === "text") return [part.text]
+        if (part.type === "reasoning") return [part.text]
+        if (part.type === "subtask") return [part.prompt]
+        if (part.type === "file" && part.filename) return [`Attached file: ${part.filename}`]
+        if (part.type !== "tool" || part.state.status !== "completed") return []
+        return [
+          [
+            `Tool: ${part.tool}`,
+            part.state.title ? `Title: ${part.state.title}` : undefined,
+            part.state.output ? `Output: ${part.state.output}` : undefined,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        ]
+      })
+      .join("\n")
+      .trim()
+  }
+
+  function scope(messages: MessageV2.WithParts[]) {
+    const idx = messages.findLastIndex(
+      (msg) => msg.info.role === "assistant" && msg.info.summary === true && msg.info.finish && !msg.info.error,
+    )
+    if (idx === -1) return { summary: undefined, messages }
+    const summary = text(messages[idx]!)
+    const next = messages.slice(idx + 1)
+    if (!summary) return { summary: undefined, messages: next }
+    if (next.length === 0) return { summary, messages }
+    return { summary, messages: next }
+  }
+
   export const Event = {
     Compacted: BusEvent.define(
       "session.compacted",
@@ -164,7 +198,7 @@ export namespace SessionCompaction {
         created: Date.now(),
       },
     })) as MessageV2.Assistant
-    const processor = SessionProcessor.create({
+    const processor = await SessionProcessor.create({
       assistantMessage: msg,
       sessionID: input.sessionID,
       model,
@@ -204,9 +238,30 @@ When constructing the summary, try to stick to this template:
 [Construct a structured list of relevant files that have been read, edited, or created that pertain to the task at hand. If all the files in a directory are relevant, include the path to the directory.]
 ---`
 
-    const promptText = compacting.prompt ?? [defaultPrompt, ...compacting.context].join("\n\n")
-    const msgs = structuredClone(messages)
+    const scoped = scope(messages)
+    const promptText = [
+      compacting.prompt ?? defaultPrompt,
+      scoped.summary
+        ? [
+            "## Earlier conversation summary",
+            "",
+            "Preserve any still-relevant details from this earlier summary when writing the new summary.",
+            scoped.summary,
+          ].join("\n")
+        : undefined,
+      ...compacting.context,
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+    const msgs = structuredClone(scoped.messages)
     await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+    if (input.abort.aborted) {
+      await Session.removeMessage({
+        sessionID: input.sessionID,
+        messageID: msg.id,
+      })
+      return "stop"
+    }
     const result = await processor.process({
       user: userMessage,
       agent,

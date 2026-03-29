@@ -1,17 +1,11 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { APICallError } from "ai"
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect"
-import * as Stream from "effect/Stream"
+import { Effect } from "effect"
 import path from "path"
 import { Bus } from "../../src/bus"
-import { Config } from "../../src/config/config"
-import { Agent } from "../../src/agent/agent"
-import { LLM } from "../../src/session/llm"
 import { SessionCompaction } from "../../src/session/compaction"
 import { Token } from "../../src/util/token"
 import { Instance } from "../../src/project/instance"
 import { Log } from "../../src/util/log"
-import { Permission } from "../../src/permission"
 import { Plugin } from "../../src/plugin"
 import { tmpdir } from "../fixture/fixture"
 import { Session } from "../../src/session"
@@ -22,7 +16,6 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import type { Provider } from "../../src/provider/provider"
 import * as ProviderModule from "../../src/provider/provider"
 import * as SessionProcessorModule from "../../src/session/processor"
-import { Snapshot } from "../../src/snapshot"
 
 Log.init({ print: false })
 
@@ -153,68 +146,19 @@ function fake(
   } satisfies SessionProcessorModule.SessionProcessor.Handle
 }
 
-function layer(result: "continue" | "compact") {
-  return Layer.succeed(
-    SessionProcessorModule.SessionProcessor.Service,
-    SessionProcessorModule.SessionProcessor.Service.of({
-      create: Effect.fn("TestSessionProcessor.create")((input) => Effect.succeed(fake(input, result))),
-    }),
-  )
-}
-
-function runtime(result: "continue" | "compact", plugin = Plugin.defaultLayer) {
-  const bus = Bus.layer
-  return ManagedRuntime.make(
-    Layer.mergeAll(SessionCompaction.layer, bus).pipe(
-      Layer.provide(Session.defaultLayer),
-      Layer.provide(layer(result)),
-      Layer.provide(Agent.defaultLayer),
-      Layer.provide(plugin),
-      Layer.provide(bus),
-      Layer.provide(Config.defaultLayer),
-    ),
-  )
-}
-
-function llm() {
-  const queue: Array<
-    Stream.Stream<LLM.Event, unknown> | ((input: LLM.StreamInput) => Stream.Stream<LLM.Event, unknown>)
-  > = []
-
-  return {
-    push(stream: Stream.Stream<LLM.Event, unknown> | ((input: LLM.StreamInput) => Stream.Stream<LLM.Event, unknown>)) {
-      queue.push(stream)
-    },
-    layer: Layer.succeed(
-      LLM.Service,
-      LLM.Service.of({
-        stream: (input) => {
-          const item = queue.shift() ?? Stream.empty
-          const stream = typeof item === "function" ? item(input) : item
-          return stream.pipe(Stream.mapEffect((event) => Effect.succeed(event)))
-        },
-      }),
-    ),
-  }
-}
-
-function liveRuntime(layer: Layer.Layer<LLM.Service>) {
-  const bus = Bus.layer
-  const status = SessionStatus.layer.pipe(Layer.provide(bus))
-  const processor = SessionProcessorModule.SessionProcessor.layer
-  return ManagedRuntime.make(
-    Layer.mergeAll(SessionCompaction.layer.pipe(Layer.provide(processor)), processor, bus, status).pipe(
-      Layer.provide(Session.defaultLayer),
-      Layer.provide(Snapshot.defaultLayer),
-      Layer.provide(layer),
-      Layer.provide(Permission.layer),
-      Layer.provide(Agent.defaultLayer),
-      Layer.provide(Plugin.defaultLayer),
-      Layer.provide(status),
-      Layer.provide(bus),
-      Layer.provide(Config.defaultLayer),
-    ),
-  )
+function mockProcessor(result: "continue" | "compact") {
+  return spyOn(SessionProcessorModule.SessionProcessor, "create").mockImplementation(async (input) => {
+    const msg = input.assistantMessage
+    return {
+      message: msg,
+      partFromToolCall() {
+        return undefined
+      },
+      async process() {
+        return result
+      },
+    }
+  })
 }
 
 function wait(ms = 50) {
@@ -227,17 +171,6 @@ function defer() {
     resolve = done
   })
   return { promise, resolve }
-}
-
-function plugin(ready: ReturnType<typeof defer>) {
-  return Layer.mock(Plugin.Service)({
-    trigger: <Name extends string, Input, Output>(name: Name, _input: Input, output: Output) => {
-      if (name !== "experimental.session.compacting") return Effect.succeed(output)
-      return Effect.sync(() => ready.resolve()).pipe(Effect.andThen(Effect.never), Effect.as(output))
-    },
-    list: () => Effect.succeed([]),
-    init: () => Effect.void,
-  })
 }
 
 describe("session.compaction.isOverflow", () => {
@@ -521,30 +454,20 @@ describe("session.compaction.process", () => {
         const msgs = await Session.messages({ sessionID: session.id })
         const done = defer()
         let seen = false
-        const rt = runtime("continue")
-        let unsub: (() => void) | undefined
+        const create = mockProcessor("continue")
+        const unsub = Bus.subscribe(SessionCompaction.Event.Compacted, (evt) => {
+          if (evt.properties.sessionID !== session.id) return
+          seen = true
+          done.resolve()
+        })
         try {
-          unsub = await rt.runPromise(
-            Bus.Service.use((svc) =>
-              svc.subscribeCallback(SessionCompaction.Event.Compacted, (evt) => {
-                if (evt.properties.sessionID !== session.id) return
-                seen = true
-                done.resolve()
-              }),
-            ),
-          )
-
-          const result = await rt.runPromise(
-            SessionCompaction.Service.use((svc) =>
-              svc.process({
-                parentID: msg.id,
-                messages: msgs,
-                sessionID: session.id,
-                abort: new AbortController().signal,
-                auto: false,
-              }),
-            ),
-          )
+          const result = await SessionCompaction.process({
+            parentID: msg.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: new AbortController().signal,
+            auto: false,
+          })
 
           await Promise.race([
             done.promise,
@@ -555,8 +478,8 @@ describe("session.compaction.process", () => {
           expect(result).toBe("continue")
           expect(seen).toBe(true)
         } finally {
-          unsub?.()
-          await rt.dispose()
+          unsub()
+          create.mockRestore()
         }
       },
     })
@@ -571,20 +494,16 @@ describe("session.compaction.process", () => {
 
         const session = await Session.create({})
         const msg = await user(session.id, "hello")
-        const rt = runtime("compact")
+        const create = mockProcessor("compact")
         try {
           const msgs = await Session.messages({ sessionID: session.id })
-          const result = await rt.runPromise(
-            SessionCompaction.Service.use((svc) =>
-              svc.process({
-                parentID: msg.id,
-                messages: msgs,
-                sessionID: session.id,
-                abort: new AbortController().signal,
-                auto: false,
-              }),
-            ),
-          )
+          const result = await SessionCompaction.process({
+            parentID: msg.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: new AbortController().signal,
+            auto: false,
+          })
 
           const summary = (await Session.messages({ sessionID: session.id })).find(
             (msg) => msg.info.role === "assistant" && msg.info.summary,
@@ -597,7 +516,7 @@ describe("session.compaction.process", () => {
             expect(JSON.stringify(summary.info.error)).toContain("Session too large to compact")
           }
         } finally {
-          await rt.dispose()
+          create.mockRestore()
         }
       },
     })
@@ -612,20 +531,16 @@ describe("session.compaction.process", () => {
 
         const session = await Session.create({})
         const msg = await user(session.id, "hello")
-        const rt = runtime("continue")
+        const create = mockProcessor("continue")
         try {
           const msgs = await Session.messages({ sessionID: session.id })
-          const result = await rt.runPromise(
-            SessionCompaction.Service.use((svc) =>
-              svc.process({
-                parentID: msg.id,
-                messages: msgs,
-                sessionID: session.id,
-                abort: new AbortController().signal,
-                auto: true,
-              }),
-            ),
-          )
+          const result = await SessionCompaction.process({
+            parentID: msg.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: new AbortController().signal,
+            auto: true,
+          })
 
           const all = await Session.messages({ sessionID: session.id })
           const last = all.at(-1)
@@ -640,7 +555,81 @@ describe("session.compaction.process", () => {
             expect(last.parts[0].text).toContain("Continue if you have next steps")
           }
         } finally {
-          await rt.dispose()
+          create.mockRestore()
+        }
+      },
+    })
+  })
+
+  test("folds the previous summary into the next compaction prompt", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        spyOn(ProviderModule.Provider, "getModel").mockResolvedValue(createModel({ context: 100_000, output: 32_000 }))
+
+        let seen: Parameters<SessionProcessorModule.SessionProcessor.Info["process"]>[0] | undefined
+        const create = spyOn(SessionProcessorModule.SessionProcessor, "create").mockImplementation(async (input) => {
+          const msg = input.assistantMessage
+          return {
+            message: msg,
+            partFromToolCall() {
+              return undefined
+            },
+            async process(value) {
+              seen = value
+              return "continue"
+            },
+          }
+        })
+
+        try {
+          const session = await Session.create({})
+          const old = await user(session.id, "very old unique directive")
+          const sum = await Session.updateMessage({
+            id: MessageID.ascending(),
+            role: "assistant",
+            parentID: old.id,
+            sessionID: session.id,
+            mode: "compaction",
+            agent: "compaction",
+            summary: true,
+            path: { cwd: tmp.path, root: tmp.path },
+            cost: 0,
+            tokens: { output: 0, input: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: ref.modelID,
+            providerID: ref.providerID,
+            time: { created: Date.now() },
+            finish: "end_turn",
+          })
+          await Session.updatePart({
+            id: PartID.ascending(),
+            messageID: sum.id,
+            sessionID: session.id,
+            type: "text",
+            text: "merged context from old phase",
+          })
+          const cur = await user(session.id, "recent unique request")
+          const msgs = await Session.messages({ sessionID: session.id })
+
+          const result = await SessionCompaction.process({
+            parentID: cur.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: new AbortController().signal,
+            auto: false,
+          })
+
+          const text = JSON.stringify(seen?.messages ?? [])
+
+          expect(result).toBe("continue")
+          expect(create).toHaveBeenCalled()
+          expect(text).toContain("merged context from old phase")
+          expect(text).toContain("Earlier conversation summary")
+          expect(text).toContain("recent unique request")
+          expect(text).not.toContain("very old unique directive")
+        } finally {
+          create.mockRestore()
         }
       },
     })
@@ -666,21 +655,17 @@ describe("session.compaction.process", () => {
           url: "https://example.com/cat.png",
         })
         const msg = await user(session.id, "current")
-        const rt = runtime("continue")
+        const create = mockProcessor("continue")
         try {
           const msgs = await Session.messages({ sessionID: session.id })
-          const result = await rt.runPromise(
-            SessionCompaction.Service.use((svc) =>
-              svc.process({
-                parentID: msg.id,
-                messages: msgs,
-                sessionID: session.id,
-                abort: new AbortController().signal,
-                auto: true,
-                overflow: true,
-              }),
-            ),
-          )
+          const result = await SessionCompaction.process({
+            parentID: msg.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: new AbortController().signal,
+            auto: true,
+            overflow: true,
+          })
 
           const last = (await Session.messages({ sessionID: session.id })).at(-1)
 
@@ -691,7 +676,7 @@ describe("session.compaction.process", () => {
             last?.parts.some((part) => part.type === "text" && part.text.includes("Attached image/png: cat.png")),
           ).toBe(true)
         } finally {
-          await rt.dispose()
+          create.mockRestore()
         }
       },
     })
@@ -708,21 +693,17 @@ describe("session.compaction.process", () => {
         await user(session.id, "earlier")
         const msg = await user(session.id, "current")
 
-        const rt = runtime("continue")
+        const create = mockProcessor("continue")
         try {
           const msgs = await Session.messages({ sessionID: session.id })
-          const result = await rt.runPromise(
-            SessionCompaction.Service.use((svc) =>
-              svc.process({
-                parentID: msg.id,
-                messages: msgs,
-                sessionID: session.id,
-                abort: new AbortController().signal,
-                auto: true,
-                overflow: true,
-              }),
-            ),
-          )
+          const result = await SessionCompaction.process({
+            parentID: msg.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: new AbortController().signal,
+            auto: true,
+            overflow: true,
+          })
 
           const last = (await Session.messages({ sessionID: session.id })).at(-1)
 
@@ -732,34 +713,14 @@ describe("session.compaction.process", () => {
             expect(last.parts[0].text).toContain("previous request exceeded the provider's size limit")
           }
         } finally {
-          await rt.dispose()
+          create.mockRestore()
         }
       },
     })
   })
 
   test("stops quickly when aborted during retry backoff", async () => {
-    const stub = llm()
     const ready = defer()
-    stub.push(
-      Stream.fromAsyncIterable(
-        {
-          async *[Symbol.asyncIterator]() {
-            yield { type: "start" } as LLM.Event
-            throw new APICallError({
-              message: "boom",
-              url: "https://example.com/v1/chat/completions",
-              requestBodyValues: {},
-              statusCode: 503,
-              responseHeaders: { "retry-after-ms": "10000" },
-              responseBody: '{"error":"boom"}',
-              isRetryable: true,
-            })
-          },
-        },
-        (err) => err,
-      ),
-    )
 
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -771,40 +732,33 @@ describe("session.compaction.process", () => {
         const msg = await user(session.id, "hello")
         const msgs = await Session.messages({ sessionID: session.id })
         const abort = new AbortController()
-        const rt = liveRuntime(stub.layer)
-        let off: (() => void) | undefined
+        const create = spyOn(SessionProcessorModule.SessionProcessor, "create").mockImplementation(async (input) => ({
+          message: input.assistantMessage,
+          partFromToolCall() {
+            return undefined
+          },
+          async process() {
+            await SessionStatus.set(session.id, {
+              type: "retry",
+              attempt: 1,
+              message: "boom",
+              next: Date.now() + 10_000,
+            })
+            ready.resolve()
+            await new Promise<void>((resolve) => abort.signal.addEventListener("abort", () => resolve(), { once: true }))
+            input.assistantMessage.error = new MessageV2.AbortedError({ message: "aborted" }).toObject()
+            return "continue"
+          },
+        }))
         let run: Promise<"continue" | "stop"> | undefined
         try {
-          off = await rt.runPromise(
-            Bus.Service.use((svc) =>
-              svc.subscribeCallback(SessionStatus.Event.Status, (evt) => {
-                if (evt.properties.sessionID !== session.id) return
-                if (evt.properties.status.type !== "retry") return
-                ready.resolve()
-              }),
-            ),
-          )
-
-          run = rt
-            .runPromiseExit(
-              SessionCompaction.Service.use((svc) =>
-                svc.process({
-                  parentID: msg.id,
-                  messages: msgs,
-                  sessionID: session.id,
-                  abort: abort.signal,
-                  auto: false,
-                }),
-              ),
-              { signal: abort.signal },
-            )
-            .then((exit) => {
-              if (Exit.isFailure(exit)) {
-                if (Cause.hasInterrupts(exit.cause) && abort.signal.aborted) return "stop"
-                throw Cause.squash(exit.cause)
-              }
-              return exit.value
-            })
+          run = SessionCompaction.process({
+            parentID: msg.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: abort.signal,
+            auto: false,
+          })
 
           await Promise.race([
             ready.promise,
@@ -826,9 +780,8 @@ describe("session.compaction.process", () => {
             expect(result.ms).toBeLessThan(250)
           }
         } finally {
-          off?.()
           abort.abort()
-          await rt.dispose()
+          create.mockRestore()
           await run?.catch(() => undefined)
         }
       },
@@ -848,29 +801,22 @@ describe("session.compaction.process", () => {
         const msg = await user(session.id, "hello")
         const msgs = await Session.messages({ sessionID: session.id })
         const abort = new AbortController()
-        const rt = runtime("continue", plugin(ready))
+        const create = mockProcessor("continue")
+        const trigger = spyOn(Plugin, "trigger").mockImplementation(async (name, _input, output) => {
+          if (name !== "experimental.session.compacting") return output
+          ready.resolve()
+          await new Promise<void>((resolve) => abort.signal.addEventListener("abort", () => resolve(), { once: true }))
+          return output
+        })
         let run: Promise<"continue" | "stop"> | undefined
         try {
-          run = rt
-            .runPromiseExit(
-              SessionCompaction.Service.use((svc) =>
-                svc.process({
-                  parentID: msg.id,
-                  messages: msgs,
-                  sessionID: session.id,
-                  abort: abort.signal,
-                  auto: false,
-                }),
-              ),
-              { signal: abort.signal },
-            )
-            .then((exit) => {
-              if (Exit.isFailure(exit)) {
-                if (Cause.hasInterrupts(exit.cause) && abort.signal.aborted) return "stop"
-                throw Cause.squash(exit.cause)
-              }
-              return exit.value
-            })
+          run = SessionCompaction.process({
+            parentID: msg.id,
+            messages: msgs,
+            sessionID: session.id,
+            abort: abort.signal,
+            auto: false,
+          })
 
           await Promise.race([
             ready.promise,
@@ -886,7 +832,8 @@ describe("session.compaction.process", () => {
           expect(all.some((msg) => msg.info.role === "assistant" && msg.info.summary)).toBe(false)
         } finally {
           abort.abort()
-          await rt.dispose()
+          trigger.mockRestore()
+          create.mockRestore()
           await run?.catch(() => undefined)
         }
       },
