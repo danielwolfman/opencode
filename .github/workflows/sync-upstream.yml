@@ -79,6 +79,7 @@ jobs:
               packages/opencode/test/provider/profile.test.ts \
               packages/opencode/test/provider/provider.test.ts \
               packages/opencode/test/provider/transform.test.ts \
+              packages/opencode/test/session/compaction.test.ts \
               packages/opencode/test/session/title.test.ts; do
               if [ "$file" = "$item" ]; then
                 return 0
