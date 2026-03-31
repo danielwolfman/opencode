@@ -14,7 +14,17 @@ if (!expectedBunVersion) {
 const expectedBunVersionRange = `^${expectedBunVersion}`
 
 if (!semver.satisfies(process.versions.bun, expectedBunVersionRange)) {
-  throw new Error(`This script requires bun@${expectedBunVersionRange}, but you are using bun@${process.versions.bun}`)
+  const sameMinor =
+    semver.major(process.versions.bun) === semver.major(expectedBunVersion) &&
+    semver.minor(process.versions.bun) === semver.minor(expectedBunVersion)
+
+  if (!sameMinor) {
+    throw new Error(`This script requires bun@${expectedBunVersionRange}, but you are using bun@${process.versions.bun}`)
+  }
+
+  console.warn(
+    `warning: expected bun@${expectedBunVersionRange}, but continuing with bun@${process.versions.bun} in the same minor series`,
+  )
 }
 
 const env = {

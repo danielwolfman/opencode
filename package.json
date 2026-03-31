@@ -109,6 +109,7 @@
     "electron"
   ],
   "overrides": {
+    "@babel/traverse": "7.28.6",
     "@types/bun": "catalog:",
     "@types/node": "catalog:"
   },
