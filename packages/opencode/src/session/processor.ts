@@ -1,6 +1,5 @@
 import { Cause, Effect, Layer, ServiceMap } from "effect"
 import * as Stream from "effect/Stream"
-import { makeRuntime } from "@/effect/run-service"
 import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
@@ -519,8 +518,4 @@ export namespace SessionProcessor {
       ),
     ),
   )
-
-  const { runPromise } = makeRuntime(Service, defaultLayer)
-
-  export const create = async (input: Input) => runPromise((svc) => svc.create(input))
 }

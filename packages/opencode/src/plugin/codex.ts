@@ -4,7 +4,8 @@ import { Installation } from "../installation"
 import { Auth, OAUTH_DUMMY_KEY } from "../auth"
 import os from "os"
 import { ProviderTransform } from "@/provider/transform"
-import { isOpenAIProfileProviderID, toOpenAIProfileProviderID } from "@/provider/profile"
+import { ModelID, ProviderID } from "@/provider/schema"
+import { setTimeout as sleep } from "node:timers/promises"
 
 const log = Log.create({ service: "plugin.codex" })
 
@@ -350,13 +351,6 @@ function waitForOAuthCallback(pkce: PkceCodes, state: string): Promise<TokenResp
 }
 
 export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
-  const profile = {
-    type: "text" as const,
-    key: "profile",
-    message: "Profile name",
-    placeholder: "default / account1 / account2",
-  }
-
   return {
     auth: {
       provider: "openai",
@@ -383,8 +377,8 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
 
         if (!provider.models["gpt-5.3-codex"]) {
           const model = {
-            id: "gpt-5.3-codex",
-            providerID: provider.id,
+            id: ModelID.make("gpt-5.3-codex"),
+            providerID: ProviderID.openai,
             api: {
               id: "gpt-5.3-codex",
               url: "https://chatgpt.com/backend-api/codex",
@@ -450,7 +444,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
               const tokens = await refreshAccessToken(currentAuth.refresh)
               const newAccountId = extractAccountId(tokens) || authWithAccount.accountId
               await input.client.auth.set({
-                path: { id: provider.id },
+                path: { id: "openai" },
                 body: {
                   type: "oauth",
                   refresh: tokens.refresh_token,
@@ -508,8 +502,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         {
           label: "ChatGPT Pro/Plus (browser)",
           type: "oauth",
-          prompts: [profile],
-          authorize: async (inputs = {}) => {
+          authorize: async () => {
             const { redirectUri } = await startOAuthServer()
             const pkce = await generatePKCE()
             const state = generateState()
@@ -527,7 +520,6 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
                 const accountId = extractAccountId(tokens)
                 return {
                   type: "success" as const,
-                  provider: toOpenAIProfileProviderID(inputs.profile),
                   refresh: tokens.refresh_token,
                   access: tokens.access_token,
                   expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
@@ -540,8 +532,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         {
           label: "ChatGPT Pro/Plus (headless)",
           type: "oauth",
-          prompts: [profile],
-          authorize: async (inputs = {}) => {
+          authorize: async () => {
             const deviceResponse = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {
               method: "POST",
               headers: {
@@ -604,7 +595,6 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
 
                     return {
                       type: "success" as const,
-                      provider: toOpenAIProfileProviderID(inputs.profile),
                       refresh: tokens.refresh_token,
                       access: tokens.access_token,
                       expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
@@ -616,7 +606,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
                     return { type: "failed" as const }
                   }
 
-                  await Bun.sleep(interval + OAUTH_POLLING_SAFETY_MARGIN_MS)
+                  await sleep(interval + OAUTH_POLLING_SAFETY_MARGIN_MS)
                 }
               },
             }
@@ -629,7 +619,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
       ],
     },
     "chat.headers": async (input, output) => {
-      if (input.model.providerID !== "openai" && !isOpenAIProfileProviderID(input.model.providerID)) return
+      if (input.model.providerID !== "openai") return
       output.headers.originator = "opencode"
       output.headers["User-Agent"] = `opencode/${Installation.VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`
       output.headers.session_id = input.sessionID

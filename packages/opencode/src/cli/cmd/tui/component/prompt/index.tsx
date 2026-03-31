@@ -128,11 +128,11 @@ export function Prompt(props: PromptProps) {
     if (!props.disabled) input.cursorColor = theme.text
   })
 
-  const lastModelMessage = createMemo(() => {
+  const lastUserMessage = createMemo(() => {
     if (!props.sessionID) return undefined
     const messages = sync.data.message[props.sessionID]
     if (!messages) return undefined
-    return messages.findLast((m) => m.role === "assistant" || m.role === "user")
+    return messages.findLast((m) => m.role === "user")
   })
 
   const usage = createMemo(() => {
@@ -181,32 +181,25 @@ export function Prompt(props: PromptProps) {
     ),
   )
 
-  // Keep agent/model/variant in sync with the latest turn for this session.
-  // This covers fallback flows where the assistant switches model/provider mid-run.
-  let syncedMessageSignature: string | undefined
+  // Initialize agent/model/variant from last user message when session changes
+  let syncedSessionID: string | undefined
   createEffect(() => {
     const sessionID = props.sessionID
-    const msg = lastModelMessage()
-    const model = msg
-      ? msg.role === "assistant"
-        ? { providerID: msg.providerID, modelID: msg.modelID }
-        : msg.model
-      : undefined
-    const key =
-      sessionID && msg && model
-        ? `${sessionID}:${msg.id}:${msg.role}:${msg.agent}:${model.providerID}/${model.modelID}:${msg.variant ?? ""}`
-        : undefined
+    const msg = lastUserMessage()
 
-    if (!key || key === syncedMessageSignature) return
-    if (!model) return
-    if (!msg) return
-    syncedMessageSignature = key
+    if (sessionID !== syncedSessionID) {
+      if (!sessionID || !msg) return
 
-    // Only set agent if it's a primary agent (not a subagent)
-    const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
-    if (msg.agent && isPrimaryAgent) local.agent.set(msg.agent)
-    local.model.set(model)
-    local.model.variant.set(msg.variant)
+      syncedSessionID = sessionID
+
+      // Only set agent if it's a primary agent (not a subagent)
+      const isPrimaryAgent = local.agent.list().some((x) => x.name === msg.agent)
+      if (msg.agent && isPrimaryAgent) {
+        local.agent.set(msg.agent)
+        if (msg.model) local.model.set(msg.model)
+        if (msg.variant) local.model.variant.set(msg.variant)
+      }
+    }
   })
 
   command.register(() => {

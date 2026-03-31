@@ -6,7 +6,6 @@ import type { Provider } from "./provider"
 import type { ModelsDev } from "./models"
 import { iife } from "@/util/iife"
 import { Flag } from "@/flag/flag"
-import { isOpenAIProfileProviderID } from "./profile"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -16,10 +15,6 @@ function mimeToModality(mime: string): Modality | undefined {
   if (mime.startsWith("video/")) return "video"
   if (mime === "application/pdf") return "pdf"
   return undefined
-}
-
-function isOpenAI(model: Provider.Model) {
-  return model.providerID === "openai" || isOpenAIProfileProviderID(model.providerID) || model.api.npm === "@ai-sdk/openai"
 }
 
 export namespace ProviderTransform {
@@ -755,7 +750,11 @@ export namespace ProviderTransform {
     const result: Record<string, any> = {}
 
     // openai and providers using openai package should set store to false by default.
-    if (isOpenAI(input.model) || input.model.api.npm === "@ai-sdk/github-copilot") {
+    if (
+      input.model.providerID === "openai" ||
+      input.model.api.npm === "@ai-sdk/openai" ||
+      input.model.api.npm === "@ai-sdk/github-copilot"
+    ) {
       result["store"] = false
     }
 
@@ -782,7 +781,7 @@ export namespace ProviderTransform {
       }
     }
 
-    if (isOpenAI(input.model) || input.providerOptions?.setCacheKey) {
+    if (input.model.providerID === "openai" || input.providerOptions?.setCacheKey) {
       result["promptCacheKey"] = input.sessionID
     }
 
@@ -864,7 +863,11 @@ export namespace ProviderTransform {
   }
 
   export function smallOptions(model: Provider.Model) {
-    if (isOpenAI(model) || model.api.npm === "@ai-sdk/github-copilot") {
+    if (
+      model.providerID === "openai" ||
+      model.api.npm === "@ai-sdk/openai" ||
+      model.api.npm === "@ai-sdk/github-copilot"
+    ) {
       if (model.api.id.includes("gpt-5")) {
         if (model.api.id.includes("5.")) {
           return { store: false, reasoningEffort: "low" }

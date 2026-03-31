@@ -2,18 +2,19 @@ import { Auth } from "@/auth"
 import { createResource, onCleanup } from "solid-js"
 
 const endpoint = "https://chatgpt.com/backend-api/wham/usage"
+const interval = 30_000
 
-interface UsageWindow {
+interface Window {
   used_percent: number
 }
 
-interface RateLimit {
-  primary_window: UsageWindow
-  secondary_window: UsageWindow | null
+interface Limit {
+  primary_window: Window
+  secondary_window: Window | null
 }
 
-interface UsagePayload {
-  rate_limit: RateLimit
+interface Payload {
+  rate_limit: Limit
 }
 
 export interface CodexUsage {
@@ -25,7 +26,7 @@ export interface CodexUsage {
 
 export async function loadCodexUsage() {
   const auth = await Auth.all()
-  const profiles = Object.entries(auth).flatMap(([id, value]) => {
+  const list = Object.entries(auth).flatMap(([id, value]) => {
     if (value.type !== "oauth") return []
     if (!id.startsWith("openai-profile-") && id !== "openai") return []
     if (!value.access || !value.accountId) return []
@@ -33,7 +34,7 @@ export async function loadCodexUsage() {
   })
 
   const usage = await Promise.all(
-    profiles.map(async ([id, value]) => {
+    list.map(async ([id, value]) => {
       const response = await fetch(endpoint, {
         headers: {
           accept: "*/*",
@@ -54,19 +55,17 @@ export async function loadCodexUsage() {
         } satisfies CodexUsage
       }
 
-      const payload = (await response.json()) as UsagePayload
+      const data = (await response.json()) as Payload
       return {
         id,
-        primary: payload.rate_limit.primary_window.used_percent,
-        secondary: payload.rate_limit.secondary_window?.used_percent ?? null,
+        primary: data.rate_limit.primary_window.used_percent,
+        secondary: data.rate_limit.secondary_window?.used_percent ?? null,
       } satisfies CodexUsage
     }),
   )
 
   return usage.toSorted((a, b) => a.id.localeCompare(b.id))
 }
-
-const interval = 30_000
 
 export function useCodexUsage() {
   const [usage, controls] = createResource(loadCodexUsage)
