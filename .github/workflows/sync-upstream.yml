@@ -72,6 +72,7 @@ jobs:
               packages/opencode/src/provider/provider.ts \
               packages/opencode/src/provider/transform.ts \
               packages/opencode/src/server/routes/session.ts \
+              packages/opencode/src/share/share-next.ts \
               packages/opencode/src/session/compaction.ts \
               packages/opencode/src/session/index.ts \
               packages/opencode/src/session/llm.ts \
@@ -80,6 +81,7 @@ jobs:
               packages/opencode/test/provider/provider.test.ts \
               packages/opencode/test/provider/transform.test.ts \
               packages/opencode/test/session/compaction.test.ts \
+              packages/opencode/test/share/share-next.test.ts \
               packages/opencode/test/session/title.test.ts; do
               if [ "$file" = "$item" ]; then
                 return 0
