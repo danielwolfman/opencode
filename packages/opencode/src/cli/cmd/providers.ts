@@ -305,7 +305,7 @@ export const ProvidersLoginCommand = cmd({
           prompts.outro("Done")
           return
         }
-        await ModelsDev.refresh().catch(() => {})
+        await ModelsDev.refresh(true).catch(() => {})
 
         const config = await Config.get()
 
