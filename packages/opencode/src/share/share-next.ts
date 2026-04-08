@@ -162,7 +162,7 @@ export namespace ShareNext {
       }
     | {
         type: "session_diff"
-        data: SDK.FileDiff[]
+        data: SDK.SnapshotFileDiff[]
       }
     | {
         type: "model"
